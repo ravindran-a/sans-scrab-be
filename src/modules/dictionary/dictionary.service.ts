@@ -41,6 +41,16 @@ export function getAllWords(): string[] {
   return wordList;
 }
 
+export function getAllEntries(): { word: string; root: string; meaning: { en: string; sa: string }; grammar: { type: string; derivation: string }; difficulty: number }[] {
+  return Array.from(wordMap.values()).map(e => ({
+    word: e.word,
+    root: e.root,
+    meaning: e.meaning,
+    grammar: e.grammar,
+    difficulty: e.difficulty,
+  }));
+}
+
 export function getWordsByDifficulty(difficulty: number): string[] {
   return wordList.filter(w => {
     const entry = wordMap.get(w);
@@ -60,6 +70,7 @@ export const DictionaryService = {
   lookupWord,
   getWordCount,
   getAllWords,
+  getAllEntries,
   getWordsByDifficulty,
   getRandomWord,
 };
