@@ -25,6 +25,8 @@ router.get('/stats', (_req: Request, res: Response) => {
 router.get('/words', (req: Request, res: Response) => {
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
   const difficulty = req.query.difficulty ? Number(req.query.difficulty) : undefined;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
 
   let words = DictionaryService.getAllEntries();
 
@@ -41,7 +43,12 @@ router.get('/words', (req: Request, res: Response) => {
     );
   }
 
-  return res.json({ words, total: words.length });
+  const total = words.length;
+  const totalPages = Math.ceil(total / limit);
+  const offset = (page - 1) * limit;
+  const paginated = words.slice(offset, offset + limit);
+
+  return res.json({ words: paginated, total, page, totalPages, limit });
 });
 
 export const dictionaryRouter = router;
