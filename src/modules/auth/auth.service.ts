@@ -1,0 +1,111 @@
+import jwt from 'jsonwebtoken';
+import { UserModel, IUser } from './auth.model';
+import { ENV } from '../../config/env';
+
+const ACCESS_TOKEN_EXPIRY = '15m';
+const REFRESH_TOKEN_EXPIRY = '7d';
+
+export interface TokenPair {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface JwtPayload {
+  userId: string;
+  username: string;
+  subscription: string;
+}
+
+function generateTokens(user: IUser): TokenPair {
+  const payload: JwtPayload = {
+    userId: user._id.toString(),
+    username: user.username,
+    subscription: user.subscription,
+  };
+
+  const accessToken = jwt.sign(payload, ENV.JWT_SECRET, { expiresIn: ACCESS_TOKEN_EXPIRY });
+  const refreshToken = jwt.sign(payload, ENV.JWT_REFRESH_SECRET, { expiresIn: REFRESH_TOKEN_EXPIRY });
+
+  return { accessToken, refreshToken };
+}
+
+export async function register(
+  username: string,
+  email: string,
+  password: string,
+  displayName: string,
+  country: string = 'IN'
+): Promise<{ user: IUser; tokens: TokenPair }> {
+  const existingUser = await UserModel.findOne({ $or: [{ email }, { username }] });
+  if (existingUser) {
+    throw new Error('User with this email or username already exists');
+  }
+
+  const user = await UserModel.create({ username, email, password, displayName, country });
+  const tokens = generateTokens(user);
+
+  user.refreshToken = tokens.refreshToken;
+  await user.save();
+
+  return { user, tokens };
+}
+
+export async function login(
+  emailOrUsername: string,
+  password: string
+): Promise<{ user: IUser; tokens: TokenPair }> {
+  const user = await UserModel.findOne({
+    $or: [{ email: emailOrUsername }, { username: emailOrUsername }],
+  }).select('+password');
+
+  if (!user) {
+    throw new Error('Invalid credentials');
+  }
+
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) {
+    throw new Error('Invalid credentials');
+  }
+
+  const tokens = generateTokens(user);
+  user.refreshToken = tokens.refreshToken;
+  await user.save();
+
+  return { user, tokens };
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<TokenPair> {
+  try {
+    const decoded = jwt.verify(refreshToken, ENV.JWT_REFRESH_SECRET) as JwtPayload;
+    const user = await UserModel.findById(decoded.userId).select('+refreshToken');
+
+    if (!user || user.refreshToken !== refreshToken) {
+      throw new Error('Invalid refresh token');
+    }
+
+    const tokens = generateTokens(user);
+    user.refreshToken = tokens.refreshToken;
+    await user.save();
+
+    return tokens;
+  } catch {
+    throw new Error('Invalid refresh token');
+  }
+}
+
+export async function logout(userId: string): Promise<void> {
+  await UserModel.findByIdAndUpdate(userId, { refreshToken: null });
+}
+
+export function verifyAccessToken(token: string): JwtPayload {
+  return jwt.verify(token, ENV.JWT_SECRET) as JwtPayload;
+}
+
+export const AuthService = {
+  register,
+  login,
+  refreshAccessToken,
+  logout,
+  verifyAccessToken,
+  generateTokens,
+};
