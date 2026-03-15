@@ -1,182 +1,537 @@
 import mongoose from 'mongoose';
+import fs from 'fs';
+import path from 'path';
 import { ENV } from '../config/env';
 import { DictionaryModel } from '../modules/dictionary/dictionary.model';
 
 /**
- * Amarakośa-style seed data.
- * Prātipadika (base/stem) forms only — no inflected forms.
- * These are real Sanskrit words from classical literature.
+ * Seed dictionary from Amarakosha CSV (file.csv).
+ * Parses ~11.7k rows, deduplicates to ~9k unique Sanskrit words,
+ * maps grammar types, assigns English meanings from headword mappings,
+ * and bulk-inserts into MongoDB.
  */
-const SEED_WORDS = [
-  // Nature & Elements (प्रकृति)
-  { word: 'जल', root: 'जल्', meaning: { en: 'water', sa: 'जलम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'जल् + अच्' }, difficulty: 1 },
-  { word: 'अग्नि', root: 'अग्नि', meaning: { en: 'fire', sa: 'अग्निः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'अङ्ग् + नि' }, difficulty: 1 },
-  { word: 'वायु', root: 'वा', meaning: { en: 'wind', sa: 'वायुः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'वा + यु' }, difficulty: 1 },
-  { word: 'पृथिवी', root: 'पृथु', meaning: { en: 'earth', sa: 'पृथिवी' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'पृथु + ङीप्' }, difficulty: 2 },
-  { word: 'आकाश', root: 'काश्', meaning: { en: 'sky', sa: 'आकाशः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'आ + काश् + अ' }, difficulty: 1 },
-  { word: 'सूर्य', root: 'सृ', meaning: { en: 'sun', sa: 'सूर्यः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'सृ + क्यप्' }, difficulty: 1 },
-  { word: 'चन्द्र', root: 'चन्द्', meaning: { en: 'moon', sa: 'चन्द्रः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'चन्द् + रन्' }, difficulty: 1 },
-  { word: 'तारा', root: 'तॄ', meaning: { en: 'star', sa: 'तारा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'तॄ + अच्' }, difficulty: 1 },
-  { word: 'मेघ', root: 'मिह्', meaning: { en: 'cloud', sa: 'मेघः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मिह् + घञ्' }, difficulty: 2 },
-  { word: 'वर्ष', root: 'वृष्', meaning: { en: 'rain', sa: 'वर्षम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'वृष् + घञ्' }, difficulty: 2 },
-  { word: 'नदी', root: 'नद्', meaning: { en: 'river', sa: 'नदी' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'नद् + ङीप्' }, difficulty: 1 },
-  { word: 'समुद्र', root: 'समुद्र', meaning: { en: 'ocean', sa: 'समुद्रः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'सम् + उद् + रा' }, difficulty: 2 },
-  { word: 'पर्वत', root: 'पर्वत', meaning: { en: 'mountain', sa: 'पर्वतः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'पर्व + अतच्' }, difficulty: 2 },
-  { word: 'वन', root: 'वन', meaning: { en: 'forest', sa: 'वनम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'वन्' }, difficulty: 1 },
-  { word: 'भूमि', root: 'भू', meaning: { en: 'ground', sa: 'भूमिः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'भू + मि' }, difficulty: 1 },
 
-  // Living beings (प्राणि)
-  { word: 'नर', root: 'नृ', meaning: { en: 'man', sa: 'नरः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'नृ + अच्' }, difficulty: 1 },
-  { word: 'नारी', root: 'नृ', meaning: { en: 'woman', sa: 'नारी' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'नृ + ङीप्' }, difficulty: 1 },
-  { word: 'गज', root: 'गज्', meaning: { en: 'elephant', sa: 'गजः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'गज् + अच्' }, difficulty: 1 },
-  { word: 'सिंह', root: 'सिंह', meaning: { en: 'lion', sa: 'सिंहः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'हिंस् + अच्' }, difficulty: 2 },
-  { word: 'अश्व', root: 'अश्', meaning: { en: 'horse', sa: 'अश्वः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'अश् + वन्' }, difficulty: 2 },
-  { word: 'गौ', root: 'गम्', meaning: { en: 'cow', sa: 'गौः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'गम् + डौ' }, difficulty: 2 },
-  { word: 'पक्षिन्', root: 'पक्ष', meaning: { en: 'bird', sa: 'पक्षी' }, grammar: { type: 'पुंलिङ्ग', derivation: 'पक्ष + इनि' }, difficulty: 3 },
-  { word: 'मत्स्य', root: 'मत्स्य', meaning: { en: 'fish', sa: 'मत्स्यः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मद् + स्यन्' }, difficulty: 3 },
-  { word: 'सर्प', root: 'सृप्', meaning: { en: 'snake', sa: 'सर्पः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'सृप् + घञ्' }, difficulty: 2 },
-  { word: 'वृक्ष', root: 'वृक्ष', meaning: { en: 'tree', sa: 'वृक्षः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'वृ + क्षन्' }, difficulty: 2 },
-  { word: 'पुष्प', root: 'पुष्', meaning: { en: 'flower', sa: 'पुष्पम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'पुष् + पन्' }, difficulty: 2 },
-  { word: 'फल', root: 'फल्', meaning: { en: 'fruit', sa: 'फलम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'फल् + अच्' }, difficulty: 1 },
-  { word: 'बीज', root: 'बीज', meaning: { en: 'seed', sa: 'बीजम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'बीज' }, difficulty: 2 },
-  { word: 'पत्र', root: 'पत्', meaning: { en: 'leaf', sa: 'पत्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'पत् + रन्' }, difficulty: 1 },
-  { word: 'मूल', root: 'मूल', meaning: { en: 'root', sa: 'मूलम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'मूल' }, difficulty: 1 },
+// ─── Grammar type mapping ────────────────────────────────────────
+const GRAMMAR_MAP: Record<string, string> = {
+  'पुं.': 'पुंलिङ्ग',
+  'स्त्री.': 'स्त्रीलिङ्ग',
+  'नपुं.': 'नपुंसकलिङ्ग',
+  'अव्य.': 'अव्यय',
+  'पुं-नपुं.': 'पुंलिङ्ग/नपुंसकलिङ्ग',
+  'पुं-बहु.': 'पुंलिङ्ग (बहुवचन)',
+  'स्त्री-बहु.': 'स्त्रीलिङ्ग (बहुवचन)',
+  'नपुं-बहु.': 'नपुंसकलिङ्ग (बहुवचन)',
+  'वि.': 'विशेषण',
+};
 
-  // Body parts (शरीर)
-  { word: 'शिर', root: 'शिर', meaning: { en: 'head', sa: 'शिरः' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'शिर' }, difficulty: 2 },
-  { word: 'नेत्र', root: 'नी', meaning: { en: 'eye', sa: 'नेत्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'नी + ष्ट्रन्' }, difficulty: 2 },
-  { word: 'कर्ण', root: 'कृ', meaning: { en: 'ear', sa: 'कर्णः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'कृ + णक्' }, difficulty: 2 },
-  { word: 'नासिका', root: 'नस्', meaning: { en: 'nose', sa: 'नासिका' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'नस् + इकन्' }, difficulty: 3 },
-  { word: 'मुख', root: 'मुख', meaning: { en: 'face', sa: 'मुखम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'मुख' }, difficulty: 1 },
-  { word: 'हस्त', root: 'हस्', meaning: { en: 'hand', sa: 'हस्तः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'हस् + तन्' }, difficulty: 1 },
-  { word: 'पाद', root: 'पद्', meaning: { en: 'foot', sa: 'पादः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'पद् + घञ्' }, difficulty: 1 },
-  { word: 'हृदय', root: 'हृद्', meaning: { en: 'heart', sa: 'हृदयम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'हृद् + अयच्' }, difficulty: 2 },
+// ─── Varga (section) to English ──────────────────────────────────
+const VARGA_EN: Record<string, string> = {
+  'स्वर्गवर्गः': 'celestial',
+  'व्योमवर्गः': 'nature & elements',
+  'दिग्वर्गः': 'directions & space',
+  'कालवर्गः': 'time & seasons',
+  'धीवर्गः': 'intellect & mind',
+  'शब्दादिवर्गः': 'sound & senses',
+  'क्षत्रियवर्गः': 'warrior & state',
+  'पातालभोगिवर्गः': 'underworld & serpents',
+  'विशेष्यनिघ्नवर्गः': 'qualities & attributes',
+  'अव्ययवर्गः': 'indeclinables',
+  'मनुष्यवर्गः': 'human & society',
+  'ब्रह्मवर्गः': 'sacred & divine',
+  'वैश्यवर्गः': 'trade & agriculture',
+  'शूद्रवर्गः': 'arts & crafts',
+  'नानार्थवर्गः': 'miscellaneous',
+  'सङ्कीर्णवर्गः': 'mixed',
+  'वनौषधिवर्गः': 'plants & herbs',
+  'सिंहादिवर्गः': 'animals',
+};
 
-  // Abstract & Qualities (गुण)
-  { word: 'धर्म', root: 'धृ', meaning: { en: 'righteousness', sa: 'धर्मः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'धृ + मन्' }, difficulty: 1 },
-  { word: 'सत्य', root: 'अस्', meaning: { en: 'truth', sa: 'सत्यम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'सत् + यत्' }, difficulty: 1 },
-  { word: 'ज्ञान', root: 'ज्ञा', meaning: { en: 'knowledge', sa: 'ज्ञानम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'ज्ञा + ल्युट्' }, difficulty: 2 },
-  { word: 'विद्या', root: 'विद्', meaning: { en: 'learning', sa: 'विद्या' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'विद् + यत्' }, difficulty: 1 },
-  { word: 'शक्ति', root: 'शक्', meaning: { en: 'power', sa: 'शक्तिः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'शक् + क्तिन्' }, difficulty: 2 },
-  { word: 'बल', root: 'बल्', meaning: { en: 'strength', sa: 'बलम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'बल्' }, difficulty: 1 },
-  { word: 'सुख', root: 'सुख', meaning: { en: 'happiness', sa: 'सुखम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'सु + खन्' }, difficulty: 1 },
-  { word: 'दुःख', root: 'दुःख', meaning: { en: 'suffering', sa: 'दुःखम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'दुस् + खन्' }, difficulty: 2 },
-  { word: 'प्रेम', root: 'प्री', meaning: { en: 'love', sa: 'प्रेम' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'प्री + मन्' }, difficulty: 2 },
-  { word: 'काल', root: 'कल्', meaning: { en: 'time', sa: 'कालः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'कल् + घञ्' }, difficulty: 1 },
-  { word: 'मृत्यु', root: 'मृ', meaning: { en: 'death', sa: 'मृत्युः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मृ + त्यु' }, difficulty: 2 },
-  { word: 'जीवन', root: 'जीव्', meaning: { en: 'life', sa: 'जीवनम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'जीव् + ल्युट्' }, difficulty: 1 },
+// ─── Headword → English meaning mapping ─────────────────────────
+// Covers the most frequent headwords from the Amarakosha.
+// Words whose headword is not found here fall back to the varga category.
+const HEADWORD_EN: Record<string, string> = {
+  // Celestial & Divine
+  'स्वर्गः': 'heaven',
+  'देवः': 'god/deity',
+  'देवयोनिः': 'celestial being',
+  'गणदेवता': 'group deity',
+  'असुरः': 'demon',
+  'राक्षसः': 'demon (rakshasa)',
+  'नरकः': 'hell',
 
-  // Actions & Concepts (क्रिया)
-  { word: 'कर्म', root: 'कृ', meaning: { en: 'action', sa: 'कर्म' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'कृ + मन्' }, difficulty: 1 },
-  { word: 'वाक्', root: 'वच्', meaning: { en: 'speech', sa: 'वाक्' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'वच् + क्विप्' }, difficulty: 2 },
-  { word: 'गति', root: 'गम्', meaning: { en: 'movement', sa: 'गतिः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'गम् + क्तिन्' }, difficulty: 2 },
-  { word: 'दान', root: 'दा', meaning: { en: 'giving', sa: 'दानम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'दा + ल्युट्' }, difficulty: 1 },
-  { word: 'भक्ति', root: 'भज्', meaning: { en: 'devotion', sa: 'भक्तिः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'भज् + क्तिन्' }, difficulty: 2 },
-  { word: 'मोक्ष', root: 'मुच्', meaning: { en: 'liberation', sa: 'मोक्षः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मुच् + घञ्' }, difficulty: 3 },
-  { word: 'योग', root: 'युज्', meaning: { en: 'union', sa: 'योगः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'युज् + घञ्' }, difficulty: 1 },
-  { word: 'तप', root: 'तप्', meaning: { en: 'penance', sa: 'तपः' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'तप् + अच्' }, difficulty: 2 },
+  // Major deities
+  'विष्णुः': 'Vishnu',
+  'शिवः': 'Shiva',
+  'ब्रह्मा': 'Brahma',
+  'इन्द्रः': 'Indra',
+  'कार्तिकेयः': 'Kartikeya',
+  'गणेशः': 'Ganesha',
+  'यमः': 'Yama (god of death)',
+  'कुबेरः': 'Kubera (god of wealth)',
+  'वरुणः': 'Varuna',
+  'कामदेवः': 'Kamadeva (god of love)',
+  'बलभद्रः': 'Balarama',
+  'बृहस्पतिः': 'Brihaspati',
+  'शनीः': 'Shani (Saturn)',
+  'गरुडः': 'Garuda',
 
-  // People & Relations (सम्बन्ध)
-  { word: 'राजन्', root: 'राज्', meaning: { en: 'king', sa: 'राजा' }, grammar: { type: 'पुंलिङ्ग', derivation: 'राज् + कनिन्' }, difficulty: 2 },
-  { word: 'देव', root: 'दिव्', meaning: { en: 'god', sa: 'देवः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'दिव् + अच्' }, difficulty: 1 },
-  { word: 'गुरु', root: 'गृ', meaning: { en: 'teacher', sa: 'गुरुः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'गृ + उण्' }, difficulty: 1 },
-  { word: 'शिष्य', root: 'शिष्', meaning: { en: 'student', sa: 'शिष्यः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'शिष् + यत्' }, difficulty: 2 },
-  { word: 'मित्र', root: 'मित्र', meaning: { en: 'friend', sa: 'मित्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'मित्र' }, difficulty: 1 },
-  { word: 'शत्रु', root: 'शत्रु', meaning: { en: 'enemy', sa: 'शत्रुः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'शत्र + उण्' }, difficulty: 2 },
-  { word: 'पुत्र', root: 'पुत्र', meaning: { en: 'son', sa: 'पुत्रः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'पुत्र' }, difficulty: 1 },
-  { word: 'माता', root: 'मातृ', meaning: { en: 'mother', sa: 'माता' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'मातृ' }, difficulty: 1 },
-  { word: 'पिता', root: 'पितृ', meaning: { en: 'father', sa: 'पिता' }, grammar: { type: 'पुंलिङ्ग', derivation: 'पितृ' }, difficulty: 1 },
+  // Goddesses
+  'पार्वती': 'Parvati',
+  'लक्ष्मी': 'Lakshmi',
+  'सरस्वती': 'Saraswati',
+  'शक्तिदेवता': 'Shakti deity',
 
-  // Objects & Places (वस्तु/स्थान)
-  { word: 'गृह', root: 'गृह', meaning: { en: 'house', sa: 'गृहम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'गृह' }, difficulty: 1 },
-  { word: 'नगर', root: 'नगर', meaning: { en: 'city', sa: 'नगरम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'नगर' }, difficulty: 1 },
-  { word: 'मार्ग', root: 'मृग्', meaning: { en: 'path', sa: 'मार्गः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मृग् + घञ्' }, difficulty: 2 },
-  { word: 'रथ', root: 'रथ', meaning: { en: 'chariot', sa: 'रथः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'रथ' }, difficulty: 2 },
-  { word: 'शस्त्र', root: 'शस्', meaning: { en: 'weapon', sa: 'शस्त्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'शस् + ष्ट्रन्' }, difficulty: 3 },
-  { word: 'पुस्तक', root: 'पुस्तक', meaning: { en: 'book', sa: 'पुस्तकम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'पुस्तक' }, difficulty: 2 },
-  { word: 'अन्न', root: 'अद्', meaning: { en: 'food', sa: 'अन्नम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'अद् + क्त' }, difficulty: 1 },
-  { word: 'वस्त्र', root: 'वस्', meaning: { en: 'cloth', sa: 'वस्त्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'वस् + ष्ट्रन्' }, difficulty: 2 },
-  { word: 'धन', root: 'धन', meaning: { en: 'wealth', sa: 'धनम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'धन' }, difficulty: 1 },
-  { word: 'रत्न', root: 'रत्न', meaning: { en: 'gem', sa: 'रत्नम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'रत्न' }, difficulty: 2 },
+  // Vishnu attributes
+  'विष्णुचापः': 'bow of Vishnu',
+  'विष्णुशङ्खः': 'conch of Vishnu',
+  'विष्णुचक्रम्': 'discus of Vishnu',
+  'विष्णुलाञ्छनम्': 'emblem of Vishnu',
+  'अनिरुद्धः': 'Aniruddha',
+  'अश्विनीकुमारौ': 'Ashvini Kumaras',
 
-  // Colors & Descriptions (वर्ण)
-  { word: 'श्वेत', root: 'श्वित्', meaning: { en: 'white', sa: 'श्वेतः' }, grammar: { type: 'विशेषण', derivation: 'श्वित् + अच्' }, difficulty: 2 },
-  { word: 'कृष्ण', root: 'कृष्', meaning: { en: 'black', sa: 'कृष्णः' }, grammar: { type: 'विशेषण', derivation: 'कृष् + णक्' }, difficulty: 2 },
-  { word: 'रक्त', root: 'रञ्ज्', meaning: { en: 'red', sa: 'रक्तः' }, grammar: { type: 'विशेषण', derivation: 'रञ्ज् + क्त' }, difficulty: 2 },
-  { word: 'पीत', root: 'पा', meaning: { en: 'yellow', sa: 'पीतः' }, grammar: { type: 'विशेषण', derivation: 'पा + क्त' }, difficulty: 2 },
-  { word: 'नील', root: 'नील', meaning: { en: 'blue', sa: 'नीलः' }, grammar: { type: 'विशेषण', derivation: 'नील' }, difficulty: 1 },
+  // Nature & Elements
+  'सूर्यः': 'sun',
+  'चन्द्रः': 'moon',
+  'आकाशः': 'sky/space',
+  'वायुः': 'wind',
+  'अग्निः': 'fire',
+  'जलम्': 'water',
+  'भूमिः': 'earth/land',
+  'मेघः': 'cloud',
+  'किरणः': 'ray/beam',
+  'प्रभा': 'light/radiance',
+  'तडित्': 'lightning',
+  'हिमम्': 'snow/ice',
+  'रात्रिः': 'night',
+  'दिवसः': 'day',
+  'प्रत्यूषः': 'dawn',
 
-  // Directions & Space (दिशा)
-  { word: 'दिश्', root: 'दिश्', meaning: { en: 'direction', sa: 'दिक्' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'दिश्' }, difficulty: 2 },
-  { word: 'उत्तर', root: 'उद्', meaning: { en: 'north', sa: 'उत्तरम्' }, grammar: { type: 'विशेषण', derivation: 'उद् + तरप्' }, difficulty: 2 },
-  { word: 'दक्षिण', root: 'दक्ष', meaning: { en: 'south', sa: 'दक्षिणम्' }, grammar: { type: 'विशेषण', derivation: 'दक्ष + इन' }, difficulty: 3 },
+  // Geography & Nature
+  'पर्वतः': 'mountain',
+  'समुद्रः': 'ocean',
+  'नदी': 'river',
+  'वनम्': 'forest',
+  'गङ्गा': 'Ganga river',
+  'बिलम्': 'hole/cave',
+  'नगरम्': 'city',
+  'मार्गः': 'path/road',
+  'गृहम्': 'house',
 
-  // Deeper philosophy (दर्शन)
-  { word: 'आत्मन्', root: 'अत्', meaning: { en: 'soul', sa: 'आत्मा' }, grammar: { type: 'पुंलिङ्ग', derivation: 'अत् + मनिन्' }, difficulty: 2 },
-  { word: 'ब्रह्मन्', root: 'बृह्', meaning: { en: 'ultimate reality', sa: 'ब्रह्म' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'बृह् + मनिन्' }, difficulty: 3 },
-  { word: 'माया', root: 'मा', meaning: { en: 'illusion', sa: 'माया' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'मा + या' }, difficulty: 2 },
-  { word: 'संसार', root: 'सृ', meaning: { en: 'worldly existence', sa: 'संसारः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'सम् + सृ + घञ्' }, difficulty: 3 },
-  { word: 'निर्वाण', root: 'वा', meaning: { en: 'extinction of suffering', sa: 'निर्वाणम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'निर् + वा + ल्युट्' }, difficulty: 4 },
-  { word: 'अहिंसा', root: 'हिंस्', meaning: { en: 'non-violence', sa: 'अहिंसा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'न + हिंसा' }, difficulty: 3 },
+  // Living beings
+  'सर्पः': 'snake/serpent',
+  'पक्षी': 'bird',
+  'पक्षिजातिविशेषः': 'species of bird',
+  'हस्तिः': 'elephant',
+  'अश्वः': 'horse',
+  'सिंहः': 'lion',
+  'गौः': 'cow',
+  'वानरः': 'monkey',
+  'वराहः': 'boar',
+  'मत्स्यः': 'fish',
+  'मयूरः': 'peacock',
+  'काकः': 'crow',
+  'भ्रमरः': 'bee/beetle',
+  'मूषकः': 'mouse/rat',
+  'वृषभः': 'bull',
+  'मेषः': 'ram/sheep',
+  'हरिणः': 'deer',
+  'उलूकः': 'owl',
+  'शुनकः': 'dog',
+  'मण्डूकः': 'frog',
+  'मृगभेदः': 'type of deer/animal',
+  'अजिनजातीयमृगः': 'hide-bearing animal',
+  'जम्भूकः': 'jackal',
 
-  // War & State (राज्य)
-  { word: 'सेना', root: 'सेन', meaning: { en: 'army', sa: 'सेना' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'सेन + टाप्' }, difficulty: 2 },
-  { word: 'युद्ध', root: 'युध्', meaning: { en: 'war', sa: 'युद्धम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'युध् + क्त' }, difficulty: 2 },
-  { word: 'शान्ति', root: 'शम्', meaning: { en: 'peace', sa: 'शान्तिः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'शम् + क्तिन्' }, difficulty: 2 },
-  { word: 'विजय', root: 'जि', meaning: { en: 'victory', sa: 'विजयः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'वि + जि + अच्' }, difficulty: 2 },
+  // Trees & Plants
+  'वृक्षः': 'tree',
+  'पद्मम्': 'lotus',
+  'शतावरी': 'shatavari plant',
+  'पिप्पली': 'long pepper',
+  'एरण्डः': 'castor plant',
+  'नीली': 'indigo plant',
+  'हरीतकी': 'haritaki (medicinal fruit)',
+  'कुङ्कुमम्': 'saffron',
+  'प्रियङ्गुवृक्षः': 'priyangu tree',
+  'शोणकः': 'shonaka tree',
+  'वेणुः': 'bamboo',
+  'वेतसः': 'cane/rattan',
+  'देवदारुवृक्षः': 'deodar tree',
+  'राजवृक्षः': 'royal tree',
+  'प्रफुल्लितवृक्षः': 'blossoming tree',
 
-  // More words for variety
-  { word: 'सरस्वती', root: 'सरस्', meaning: { en: 'goddess of learning', sa: 'सरस्वती' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'सरस् + वत् + ङीप्' }, difficulty: 3 },
-  { word: 'लक्ष्मी', root: 'लक्ष्', meaning: { en: 'goddess of wealth', sa: 'लक्ष्मीः' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'लक्ष् + मिन्' }, difficulty: 3 },
-  { word: 'गणेश', root: 'गण', meaning: { en: 'lord of hosts', sa: 'गणेशः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'गण + ईश' }, difficulty: 2 },
-  { word: 'कृपा', root: 'कृप्', meaning: { en: 'grace', sa: 'कृपा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'कृप् + अच्' }, difficulty: 2 },
-  { word: 'दया', root: 'दय्', meaning: { en: 'compassion', sa: 'दया' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'दय् + अच्' }, difficulty: 1 },
-  { word: 'क्षमा', root: 'क्षम्', meaning: { en: 'forgiveness', sa: 'क्षमा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'क्षम् + अच्' }, difficulty: 3 },
-  { word: 'वीर', root: 'वीर', meaning: { en: 'hero', sa: 'वीरः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'वीर' }, difficulty: 1 },
-  { word: 'धनुस्', root: 'धन्', meaning: { en: 'bow', sa: 'धनुः' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'धन् + उस्' }, difficulty: 3 },
-  { word: 'बाण', root: 'बण्', meaning: { en: 'arrow', sa: 'बाणः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'बण् + घञ्' }, difficulty: 2 },
-  { word: 'कवच', root: 'कवच', meaning: { en: 'armor', sa: 'कवचम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'कवच' }, difficulty: 3 },
-  { word: 'रस', root: 'रस', meaning: { en: 'essence', sa: 'रसः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'रस' }, difficulty: 1 },
-  { word: 'ध्यान', root: 'ध्यै', meaning: { en: 'meditation', sa: 'ध्यानम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'ध्यै + ल्युट्' }, difficulty: 2 },
-  { word: 'मन्त्र', root: 'मन्', meaning: { en: 'sacred formula', sa: 'मन्त्रः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'मन् + ष्ट्रन्' }, difficulty: 2 },
-  { word: 'यज्ञ', root: 'यज्', meaning: { en: 'sacrifice', sa: 'यज्ञः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'यज् + नन्' }, difficulty: 3 },
-  { word: 'वेद', root: 'विद्', meaning: { en: 'sacred knowledge', sa: 'वेदः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'विद् + घञ्' }, difficulty: 1 },
-  { word: 'श्लोक', root: 'श्लोक', meaning: { en: 'verse', sa: 'श्लोकः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'श्लोक' }, difficulty: 3 },
-  { word: 'सूत्र', root: 'सिव्', meaning: { en: 'thread/aphorism', sa: 'सूत्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'सिव् + ष्ट्रन्' }, difficulty: 3 },
-  { word: 'प्राण', root: 'प्रण्', meaning: { en: 'vital breath', sa: 'प्राणः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'प्र + अन् + घञ्' }, difficulty: 2 },
-  { word: 'चक्र', root: 'चक्र', meaning: { en: 'wheel', sa: 'चक्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'कृ + अच्' }, difficulty: 2 },
-  { word: 'पद्म', root: 'पद्म', meaning: { en: 'lotus', sa: 'पद्मम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'पद्म' }, difficulty: 2 },
-  { word: 'गङ्गा', root: 'गम्', meaning: { en: 'Ganges river', sa: 'गङ्गा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'गम् + गन्' }, difficulty: 3 },
-  { word: 'हिमालय', root: 'हिम', meaning: { en: 'abode of snow', sa: 'हिमालयः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'हिम + आलय' }, difficulty: 3 },
-  { word: 'संगीत', root: 'गै', meaning: { en: 'music', sa: 'संगीतम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'सम् + गै + क्त' }, difficulty: 3 },
-  { word: 'नृत्य', root: 'नृत्', meaning: { en: 'dance', sa: 'नृत्यम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'नृत् + यत्' }, difficulty: 3 },
-  { word: 'काव्य', root: 'कवि', meaning: { en: 'poetry', sa: 'काव्यम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'कवि + ष्यञ्' }, difficulty: 3 },
-  { word: 'चित्र', root: 'चित्', meaning: { en: 'picture', sa: 'चित्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'चित् + रन्' }, difficulty: 2 },
-  { word: 'शिल्प', root: 'शिल्प', meaning: { en: 'art/craft', sa: 'शिल्पम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'शिल्प' }, difficulty: 3 },
-  { word: 'ग्राम', root: 'ग्रम्', meaning: { en: 'village', sa: 'ग्रामः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'ग्रम् + घञ्' }, difficulty: 2 },
-  { word: 'क्षेत्र', root: 'क्षि', meaning: { en: 'field', sa: 'क्षेत्रम्' }, grammar: { type: 'नपुंसकलिङ्ग', derivation: 'क्षि + ष्ट्रन्' }, difficulty: 3 },
-  { word: 'सभा', root: 'सभा', meaning: { en: 'assembly', sa: 'सभा' }, grammar: { type: 'स्त्रीलिङ्ग', derivation: 'सभा' }, difficulty: 2 },
-  { word: 'आश्रम', root: 'श्रम्', meaning: { en: 'hermitage', sa: 'आश्रमः' }, grammar: { type: 'पुंलिङ्ग', derivation: 'आ + श्रम् + अच्' }, difficulty: 3 },
-];
+  // Medicinal herbs
+  'गुडूची': 'giloy (herb)',
+  'मञ्जिष्टा': 'manjishtha (herb)',
+  'मूर्वा': 'murva (herb)',
+  'कण्टकारिका': 'thorny nightshade',
+  'स्पृक्का': 'sprikka plant',
+  'मूषिकपर्णी': 'mushikaparni (herb)',
+  'वीरणमूलम्': 'vetiver root',
+  'धन्वयासः': 'dhanvayasa (herb)',
+  'पाटा': 'pata (herb)',
+  'कटुरोहिणी': 'kutki (herb)',
+  'अतिविषा': 'ativisha (herb)',
+  'अपामार्गः': 'apamarga (herb)',
+  'बाकुची': 'bakuchi (herb)',
+  'रास्ना': 'rasna (herb)',
+  'सिंहिपुच्छी': 'simhipuchchi (herb)',
+  'भार्गी': 'bhargi (herb)',
+  'सल्लकी': 'sallaki (herb)',
+  'शतपुष्पा': 'dill plant',
+  'मर्कटी': 'markati plant',
+  'सीहुण्डः': 'euphorbia plant',
+  'कैवर्तीमुस्तकम्': 'kaivartimustaka (herb)',
+  'शीतलद्रव्यम्': 'cooling substance',
+  'स्थावरविषभेदाः': 'plant-based poison',
+  'तृणविशेषः': 'type of grass',
+
+  // People & Society
+  'राजा': 'king',
+  'स्त्री': 'woman',
+  'स्त्रीविशेषः': 'type of woman',
+  'पत्नी': 'wife',
+  'शिशुः': 'child',
+  'दासः': 'servant',
+  'ब्राह्मणः': 'brahmin',
+  'मनुष्यः': 'human',
+  'वणिक्': 'merchant',
+  'चोरः': 'thief',
+  'चण्डालः': 'outcaste',
+  'सारथिः': 'charioteer',
+  'गोपालः': 'cowherd',
+  'चारपुरुषः': 'spy',
+  'ज्यौतिषिकः': 'astrologer',
+  'कामुकः': 'lustful person',
+  'सगोत्रः': 'kinsman',
+  'विद्वान्': 'learned person',
+  'मूर्खः': 'fool',
+  'वृद्धः': 'elder',
+  'रजस्वला': 'menstruating woman',
+  'स्वैरिणी': 'independent woman',
+  'अधिपतिः': 'ruler/chief',
+  'बुद्धः': 'Buddha/enlightened one',
+  'शाक्यः': 'Shakya/Buddhist',
+  'जीवकः': 'living being',
+
+  // Body & Health
+  'देहः': 'body',
+  'नेत्रम्': 'eye',
+  'केशः': 'hair',
+  'शिरः': 'head',
+  'रोगः': 'disease',
+
+  // War & Weapons
+  'युद्धम्': 'battle/war',
+  'बाणः': 'arrow',
+  'खड्गः': 'sword',
+  'सेना': 'army',
+  'सन्नाहः': 'armor',
+  'शराधारः': 'quiver',
+  'कामबाणः': 'arrow of Kama',
+
+  // Abstract Concepts
+  'मारणम्': 'killing/death',
+  'मरणम्': 'death',
+  'दुःखम्': 'suffering/sorrow',
+  'आनन्दः': 'bliss/joy',
+  'शब्दः': 'sound/word',
+  'स्पृहा': 'desire/longing',
+  'बुद्धिः': 'intellect',
+  'कोपः': 'anger',
+  'मदः': 'intoxication/pride',
+  'भयानकरसः': 'fearful sentiment',
+  'करुणरसः': 'compassionate sentiment',
+  'कीर्तिः': 'fame/glory',
+  'सिद्धिः': 'accomplishment',
+  'मोक्षः': 'liberation',
+  'नीतिः': 'ethics/policy',
+  'शोभा': 'beauty/splendor',
+  'जुगुप्सा': 'disgust/contempt',
+  'परिभवः': 'insult/humiliation',
+  'स्वभावः': 'nature/temperament',
+  'मर्यादा': 'boundary/propriety',
+  'शापवचनम्': 'curse',
+
+  // Qualities & Attributes
+  'अतिशयः': 'excellence/excess',
+  'श्रेष्ठम्': 'best/excellent',
+  'शुभम्': 'auspicious',
+  'मनोरमम्': 'delightful',
+  'अधमम्': 'lowest/worst',
+  'पापम्': 'sin/evil',
+  'कपटः': 'deceit/fraud',
+  'कठिनम्': 'hard/tough',
+  'सूक्ष्मम्': 'subtle/fine',
+  'शुक्लवर्णः': 'white color',
+  'कृष्णवर्णः': 'black color',
+  'रक्तम्': 'red/blood',
+  'कपिलवर्णः': 'tawny color',
+  'वक्रम्': 'crooked/curved',
+  'बहुलम्': 'abundant',
+  'समग्रम्': 'complete/whole',
+  'अल्पम्': 'small/little',
+  'शीघ्रम्': 'swift/quick',
+  'विस्तृतम्': 'expanded/wide',
+  'नीचः': 'low/base',
+  'कुशलः': 'skillful',
+  'अलसः': 'lazy/idle',
+  'ह्रस्वः': 'short/small',
+  'सदृशः': 'similar/alike',
+  'यथेप्सितम्': 'as desired',
+
+  // Actions & States
+  'दानम्': 'giving/charity',
+  'याचनम्': 'begging/requesting',
+  'चलनम्': 'movement',
+  'अन्तर्धानम्': 'disappearance',
+  'पलायनम्': 'flight/escape',
+  'वचनम्': 'speech/utterance',
+  'भक्षितम्': 'eaten/consumed',
+  'स्तुतम्': 'praised',
+  'स्तुतिः': 'praise/hymn',
+  'अङ्गीकारः': 'acceptance',
+  'अङ्गीकृतम्': 'accepted',
+  'जननम्': 'birth',
+  'बद्धः': 'bound/tied',
+  'खण्डितम्': 'broken/divided',
+  'आरम्भः': 'beginning',
+  'आज्ञा': 'command/order',
+  'प्रतिमा': 'image/idol',
+  'भेदः': 'difference/division',
+  'अविरतम्': 'continuous',
+  'तत्क्षणम्': 'instantly',
+  'सामर्थ्यम्': 'ability/power',
+  'परिमाणः': 'measurement',
+  'वेगः': 'speed/force',
+  'वेतनम्': 'wages/salary',
+  'प्रश्नः': 'question',
+
+  // Objects & Places
+  'द्रव्यम्': 'substance/material',
+  'वस्त्रम्': 'cloth/garment',
+  'सुवर्णम्': 'gold',
+  'लोहः': 'iron/metal',
+  'चिह्नम्': 'mark/sign',
+  'सभा': 'assembly/court',
+  'समूहः': 'group/collection',
+  'विशेषनिधिः': 'special treasure',
+  'वंशः': 'dynasty/lineage',
+  'नाम': 'name',
+  'सिद्धान्नम्': 'cooked food',
+  'काञ्जिकम्': 'fermented rice water',
+  'नक्षत्रम्': 'constellation/star',
+  'शची': 'Shachi (Indra\'s wife)',
+  'अमावासी': 'new moon day',
+  'संवत्सरः': 'year',
+
+  // Concepts with underscore separators
+  'समीपः': 'nearness/proximity',
+  'शत्रुः': 'enemy',
+  'सुरा': 'liquor/wine',
+  'विजनः': 'solitary/deserted',
+  'कारणम्': 'cause/reason',
+  'ग्रीष्मऋतुः': 'summer season',
+  'नवरसेष्वेकः': 'one of the nine rasas',
+  'पुरीषम्': 'excrement',
+
+  // Religious & Ritual
+  'यज्ञः': 'sacrifice/ritual',
+
+  // Complex headwords (underscore-separated phrases)
+  'इन्द्रस्य_वज्रायुधम्': 'Indra\'s thunderbolt',
+  'प्राक्तनशुभाशुभकर्मः': 'past karma (good & bad)',
+  'रविचन्द्रबिम्बम्': 'disc of sun/moon',
+  'अत्यन्धकाररात्रिः': 'extremely dark night',
+  'घृताचीनामाप्सरा': 'apsara named Ghritachi',
+  'तिलोत्तमानामाप्सरा': 'apsara named Tilottama',
+  'अदृष्टचन्द्रामावासी': 'moonless new moon',
+  'परमा_शोभा': 'supreme beauty',
+  'नरकस्थ_नदी': 'river of hell',
+  'विष्णोः_मणिः': 'gem of Vishnu',
+  'विष्णोः_अश्वः': 'horse of Vishnu',
+  'विष्णोः_सारथिः': 'charioteer of Vishnu',
+  'विष्णोः_मन्त्रिः': 'minister of Vishnu',
+  'शिवस्य_जटाबन्धः': 'matted hair of Shiva',
+  'कुबेरस्य_उद्यानम्': 'garden of Kubera',
+  'राज्ञः_बाला': 'king\'s daughter',
+  'ईशानदिशायाः_स्वामी': 'lord of the northeast',
+  'नैरृत्यदिशायाः_स्वामी': 'lord of the southwest',
+  'अग्नेः_निर्गतज्वाला': 'flame from fire',
+  'मार्गपौषाभ्यां_निष्पन्नः_ऋतुः': 'winter season',
+  'माघफाल्गुनाभ्यां_निष्पन्नः_ऋतुः': 'cool season',
+  'श्रावणभाद्राभ्यां_निष्पन्नः_ऋतुः': 'rainy season',
+  'आश्विनकार्तिकाभ्यां_निष्पन्नः_ऋतुः': 'autumn season',
+  'ज्येष्ठाषाढाभ्याम्_ऋतुः': 'hot season',
+  'स्त्रीणाम्_श्रृङ्गारभावजाः_क्रिया': 'amorous gesture of women',
+  'दिवसः_पूर्वो_भागः': 'forenoon',
+  'दिवसः_मध्यो_भागः': 'midday',
+  'दिवसः_अन्त्यो_भागः': 'afternoon',
+  'दिनद्वयमध्यगता_रात्रिः': 'night between two days',
+  'बहुभिः_कृतः_महाध्वनिः': 'great noise by many',
+  'युगपदुच्यमानौ_सूर्यचन्द्रौ': 'sun and moon together',
+  'पूर्णचन्द्रसहिता_पूर्णिमा': 'full moon with full moon',
+  'देवानां_राज्ञां_च_गृहम्': 'palace of gods and kings',
+  'ससामर्थ्यम्_शत्रूणां_सम्मुखं_गतः': 'one who bravely faces enemies',
+  'सजातीयैः_प्राणिभिरप्राणिभिर्वा_समूहः': 'group of same kind',
+  'मनसः_सुखभोगे_तत्परता': 'attachment to pleasure',
+  'भूमौ_वर्तमानं_रन्ध्रम्': 'hole in the ground',
+  'द्वाभ्यामेव_कृत_मन्त्रः': 'counsel by two',
+  'राहुग्रस्थेन्दुः_अथवा_सूर्यः': 'eclipsed moon or sun',
+  'युद्धारम्भे_अन्ते_वा_पानकर्मः': 'drinking at war\'s start or end',
+  'पित्रादेः_पुरतः_जातलज्जा': 'shame before elders',
+  'सुतस्य_सुतायाः_वा_अपत्यः': 'grandchild',
+  'पत्युर्वा_पत्न्याः_वा_माता': 'mother-in-law',
+  'यस्य_यत्_ज्ञातः_तत्': 'what is known to whom',
+  'अरिष्टः-रीढा': 'soapnut tree',
+};
+
+// ─── Parse CSV & build entries ───────────────────────────────────
+
+interface CsvRow {
+  word: string;
+  grammar: string;
+  varga: string;
+  headword: string;
+}
+
+function parseCsv(csvPath: string): CsvRow[] {
+  const content = fs.readFileSync(csvPath, 'utf-8');
+  const lines = content.split('\n').filter(l => l.trim());
+  const rows: CsvRow[] = [];
+
+  for (const line of lines) {
+    const cols = line.split(',');
+    if (cols.length < 6) continue;
+
+    const word = cols[1]?.trim();
+    const grammar = cols[3]?.trim();
+    const varga = cols[4]?.trim();
+    const headword = cols[5]?.trim();
+
+    if (!word) continue;
+
+    rows.push({ word, grammar, varga, headword });
+  }
+
+  return rows;
+}
+
+function getEnglishMeaning(headword: string, varga: string): string {
+  // Direct mapping
+  if (HEADWORD_EN[headword]) {
+    return HEADWORD_EN[headword];
+  }
+
+  // Try varga-based fallback
+  if (VARGA_EN[varga]) {
+    return VARGA_EN[varga];
+  }
+
+  // Generic fallback
+  return 'Sanskrit word';
+}
+
+function mapGrammar(raw: string): string {
+  return GRAMMAR_MAP[raw] || raw || 'अज्ञात';
+}
+
+/**
+ * Calculate difficulty 1-5 based on akshara (syllable) complexity.
+ * Shorter, common words = easier; longer, complex words = harder.
+ */
+function calculateDifficulty(word: string): number {
+  // Count approximate aksharas by counting vowel signs + independent vowels + consonant clusters
+  // Simple heuristic: count Unicode code points minus combining marks, divided by ~2
+  const codepoints = [...word];
+  const len = codepoints.length;
+
+  // Very short words (1-3 codepoints) → difficulty 1
+  if (len <= 3) return 1;
+  // Short words (4-6 codepoints) → difficulty 1-2
+  if (len <= 6) return 1;
+  // Medium words (7-10 codepoints) → difficulty 2
+  if (len <= 10) return 2;
+  // Longer words (11-15 codepoints) → difficulty 3
+  if (len <= 15) return 3;
+  // Long words (16-20 codepoints) → difficulty 4
+  if (len <= 20) return 4;
+  // Very long words → difficulty 5
+  return 5;
+}
 
 async function seedDictionary(): Promise<void> {
   try {
     await mongoose.connect(ENV.MONGO_URI);
     console.log('[Seed] Connected to MongoDB');
 
-    // Clear existing entries
+    // Parse CSV
+    const csvPath = path.resolve(__dirname, '../../file.csv');
+    console.log(`[Seed] Reading CSV from ${csvPath}`);
+    const rows = parseCsv(csvPath);
+    console.log(`[Seed] Parsed ${rows.length} rows from CSV`);
+
+    // Deduplicate: keep first occurrence of each word
+    const seen = new Set<string>();
+    const uniqueEntries: Array<{
+      word: string;
+      root: string;
+      meaning: { en: string; sa: string };
+      grammar: { type: string; derivation: string };
+      difficulty: number;
+    }> = [];
+
+    for (const row of rows) {
+      const normalized = row.word.normalize('NFC');
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+
+      uniqueEntries.push({
+        word: normalized,
+        root: normalized, // Use word as root since CSV doesn't provide separate roots
+        meaning: {
+          en: getEnglishMeaning(row.headword, row.varga),
+          sa: row.headword || row.varga,
+        },
+        grammar: {
+          type: mapGrammar(row.grammar),
+          derivation: '',
+        },
+        difficulty: calculateDifficulty(normalized),
+      });
+    }
+
+    console.log(`[Seed] ${uniqueEntries.length} unique words after deduplication`);
+
+    // Clear existing dictionary
+    const deletedCount = await DictionaryModel.countDocuments();
     await DictionaryModel.deleteMany({});
-    console.log('[Seed] Cleared existing dictionary');
+    console.log(`[Seed] Cleared ${deletedCount} existing entries`);
 
-    // Normalize all words before inserting
-    const normalizedWords = SEED_WORDS.map(w => ({
-      ...w,
-      word: w.word.normalize('NFC'),
-      root: w.root.normalize('NFC'),
+    // Bulk insert in batches of 1000
+    const BATCH_SIZE = 1000;
+    let inserted = 0;
+    for (let i = 0; i < uniqueEntries.length; i += BATCH_SIZE) {
+      const batch = uniqueEntries.slice(i, i + BATCH_SIZE);
+      await DictionaryModel.insertMany(batch, { ordered: false });
+      inserted += batch.length;
+      console.log(`[Seed] Inserted ${inserted}/${uniqueEntries.length} words`);
+    }
+
+    console.log(`[Seed] Successfully seeded ${uniqueEntries.length} dictionary entries`);
+
+    // Print some stats
+    const difficultyStats = [1, 2, 3, 4, 5].map(d => ({
+      difficulty: d,
+      count: uniqueEntries.filter(e => e.difficulty === d).length,
     }));
+    console.log('[Seed] Difficulty distribution:');
+    difficultyStats.forEach(s => console.log(`  Level ${s.difficulty}: ${s.count} words`));
 
-    await DictionaryModel.insertMany(normalizedWords);
-    console.log(`[Seed] Inserted ${normalizedWords.length} words`);
+    // Show sample entries
+    console.log('\n[Seed] Sample entries:');
+    uniqueEntries.slice(0, 5).forEach(e =>
+      console.log(`  ${e.word} → ${e.meaning.en} (${e.meaning.sa}) [${e.grammar.type}] D:${e.difficulty}`)
+    );
 
     await mongoose.disconnect();
     console.log('[Seed] Done');

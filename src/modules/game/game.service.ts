@@ -1,9 +1,10 @@
 import { GameModel, IGame, GameMode, PlayerState, MoveRecord } from './game.model';
-import { SanskritEngine, RACK_SIZE, createTileBag, drawFromBag, constructAkshara } from '../../engine/SanskritEngine';
+import { SanskritEngine, RACK_SIZE, createTileBag, drawFromBag, constructAkshara, CONSONANTS } from '../../engine/SanskritEngine';
 import { createBoard, BoardState, TilePlacement, validatePlacement, applyPlacements, extractWords } from '../../engine/Board';
 import { calculateMoveScore } from '../../engine/Scoring';
 import { DictionaryService } from '../dictionary/dictionary.service';
 import { normalizeText } from '../../engine/GraphemeSplitter';
+import { AiPlayer } from '../ai/AiPlayer';
 
 export interface CreateGameOptions {
   mode: GameMode;
@@ -99,9 +100,11 @@ export async function makeMove(input: MoveInput): Promise<{
   moveScore: number;
   wordsFormed: { word: string; score: number }[];
 }> {
+  // Optimistic locking: read current turn, validate, then atomic update
   const game = await GameModel.findById(input.gameId);
   if (!game) throw new Error('Game not found');
   if (game.status !== 'active') throw new Error('Game is not active');
+  const expectedTurn = game.currentTurn;
 
   const playerIndex = game.players.findIndex(p => p.userId === input.userId);
   if (playerIndex === -1) throw new Error('Player not in game');
@@ -117,6 +120,27 @@ export async function makeMove(input: MoveInput): Promise<{
     if (idx < 0 || idx >= player.rack.length) {
       throw new Error('Invalid rack index');
     }
+  }
+
+  // Anti-cheat: verify aksharas can be formed from the rack consonants at given indices
+  const rackConsonants = input.rackIndices.map(idx => player.rack[idx]);
+  const neededConsonants: string[] = [];
+  for (const placement of input.placements) {
+    const normalized = normalizeText(placement.akshara);
+    for (const ch of Array.from(normalized)) {
+      const code = ch.charCodeAt(0);
+      // Devanagari consonant range: 0x0915 (क) to 0x0939 (ह)
+      if (code >= 0x0915 && code <= 0x0939) {
+        neededConsonants.push(ch);
+      }
+    }
+  }
+  // Sort both arrays and compare — all needed consonants must match rack consonants used
+  const sortedNeeded = [...neededConsonants].sort();
+  const sortedRack = [...rackConsonants].sort();
+  if (sortedNeeded.length !== sortedRack.length ||
+      sortedNeeded.some((c, i) => c !== sortedRack[i])) {
+    throw new Error('Placed aksharas do not match the rack consonants');
   }
 
   // Validate placements
@@ -175,9 +199,17 @@ export async function makeMove(input: MoveInput): Promise<{
     determineWinner(game);
   }
 
-  await game.save();
+  // Optimistic locking: ensure no concurrent move modified the turn
+  const saved = await GameModel.findOneAndUpdate(
+    { _id: game._id, currentTurn: expectedTurn },
+    game.toObject(),
+    { new: true }
+  );
+  if (!saved) {
+    throw new Error('Move conflict — another move was processed. Please refresh.');
+  }
 
-  return { game, moveScore: totalScore, wordsFormed: wordScores };
+  return { game: saved, moveScore: totalScore, wordsFormed: wordScores };
 }
 
 export async function passTurn(gameId: string, userId: string): Promise<IGame> {
@@ -194,13 +226,7 @@ export async function passTurn(gameId: string, userId: string): Promise<IGame> {
   game.currentTurn += 1;
   game.turnStartedAt = new Date();
 
-  // Check if both players passed consecutively (game ends)
-  const lastTwoMoves = game.moves.slice(-2);
-  if (lastTwoMoves.length === 2 && lastTwoMoves.every(m => m.placements.length === 0)) {
-    game.status = 'finished';
-    determineWinner(game);
-  }
-
+  // Record the pass move first
   game.moves.push({
     playerId: userId,
     placements: [],
@@ -208,6 +234,19 @@ export async function passTurn(gameId: string, userId: string): Promise<IGame> {
     score: 0,
     timestamp: new Date(),
   });
+
+  // Check if consecutive passes should end the game
+  const lastTwo = game.moves.slice(-2);
+  if (lastTwo.length === 2 && lastTwo.every(m => m.placements.length === 0)) {
+    // Solo mode: 2 consecutive passes by the same (only) player ends the game
+    // Multiplayer/AI: 2 consecutive passes from different players ends the game
+    const isSoloMode = game.players.length === 1;
+    const differentPlayers = lastTwo[0].playerId !== lastTwo[1].playerId;
+    if (isSoloMode || differentPlayers) {
+      game.status = 'finished';
+      determineWinner(game);
+    }
+  }
 
   await game.save();
   return game;
@@ -266,16 +305,61 @@ export async function exchangeTiles(
   return game;
 }
 
-function determineWinner(game: IGame): void {
-  let maxScore = -1;
-  let winnerId = '';
-  for (const player of game.players) {
-    if (player.score > maxScore) {
-      maxScore = player.score;
-      winnerId = player.userId;
-    }
+/**
+ * Preview a move: validate placements, check word validity, calculate score.
+ * Does NOT commit the move. Used for real-time feedback.
+ */
+export async function previewMove(
+  gameId: string,
+  userId: string,
+  placements: TilePlacement[]
+): Promise<{
+  valid: boolean;
+  totalScore: number;
+  words: { word: string; score: number; valid: boolean }[];
+  error?: string;
+}> {
+  const game = await GameModel.findById(gameId);
+  if (!game) return { valid: false, totalScore: 0, words: [], error: 'Game not found' };
+  if (game.status !== 'active') return { valid: false, totalScore: 0, words: [], error: 'Game not active' };
+
+  const board = game.board as BoardState;
+
+  // Validate placement geometry
+  const validation = validatePlacement(board, placements);
+  if (!validation.valid) {
+    return { valid: false, totalScore: 0, words: [], error: validation.error };
   }
-  game.winner = winnerId;
+
+  // Extract words and check validity
+  const formedWords = extractWords(board, placements);
+  const wordResults: { word: string; score: number; valid: boolean }[] = [];
+  let allValid = true;
+
+  // Calculate scores
+  const { wordScores } = calculateMoveScore(board, placements);
+
+  for (const ws of wordScores) {
+    const isValid = DictionaryService.isValidWord(normalizeText(ws.word));
+    wordResults.push({ word: ws.word, score: ws.score, valid: isValid });
+    if (!isValid) allValid = false;
+  }
+
+  const totalScore = allValid ? wordResults.reduce((sum, w) => sum + w.score, 0) : 0;
+
+  return { valid: allValid, totalScore, words: wordResults };
+}
+
+function determineWinner(game: IGame): void {
+  const sorted = [...game.players].sort((a, b) => b.score - a.score);
+  if (sorted.length >= 2 && sorted[0].score === sorted[1].score) {
+    // Tiebreaker: player who played last loses (the other wins)
+    // This rewards the player who finished first or forced the end
+    const lastMovePlayer = game.moves.length > 0 ? game.moves[game.moves.length - 1].playerId : null;
+    game.winner = sorted.find(p => p.userId !== lastMovePlayer)?.userId || sorted[0].userId;
+  } else {
+    game.winner = sorted[0].userId;
+  }
 }
 
 export async function getGame(gameId: string): Promise<IGame | null> {
@@ -299,13 +383,46 @@ export async function abandonGame(gameId: string, userId: string): Promise<IGame
   return game;
 }
 
+/**
+ * Trigger AI move after human plays in AI mode.
+ * Returns updated game state after AI's turn.
+ */
+export async function triggerAiMove(gameId: string): Promise<IGame | null> {
+  const game = await GameModel.findById(gameId);
+  if (!game || game.status !== 'active' || game.mode !== 'ai') return null;
+
+  const aiPlayerIdx = game.players.findIndex(p => p.userId === 'ai');
+  if (aiPlayerIdx === -1) return null;
+  if (game.currentTurn % game.players.length !== aiPlayerIdx) return null;
+
+  const aiPlayer = game.players[aiPlayerIdx];
+  const ai = new AiPlayer(game.aiDifficulty || 1);
+  const board = game.board as BoardState;
+  const move = await ai.findMove(board, aiPlayer.rack);
+
+  if (!move) {
+    // AI can't make a move — auto-pass
+    return await passTurn(gameId, 'ai');
+  }
+
+  // AI makes its move
+  return (await makeMove({
+    gameId,
+    userId: 'ai',
+    placements: move.placements,
+    rackIndices: move.rackIndices,
+  })).game;
+}
+
 export const GameService = {
   createGame,
   joinGame,
   makeMove,
   passTurn,
   exchangeTiles,
+  previewMove,
   getGame,
   getGamesByUser,
   abandonGame,
+  triggerAiMove,
 };

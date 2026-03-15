@@ -97,10 +97,12 @@ export function drawFromBag(bag: string[], count: number): { drawn: string[]; re
 /**
  * Construct an akṣara from consonants and a vowel.
  * E.g., ['क', 'र'] + 'ई' => 'क्री'
+ * Pass vowel = '्' (VIRAMA) to build a halant-ending consonant (e.g., त्, द्)
  */
 export function constructAkshara(consonants: string[], vowel: string = 'अ'): string {
   if (consonants.length === 0) {
-    // Independent vowel
+    // Independent vowel (virama alone is not valid)
+    if (vowel === VIRAMA) return '';
     return vowel;
   }
 
@@ -110,6 +112,12 @@ export function constructAkshara(consonants: string[], vowel: string = 'अ'): s
     if (i < consonants.length - 1) {
       result += VIRAMA;
     }
+  }
+
+  // Halant-ending: consonant(s) + virama, no vowel applied
+  if (vowel === VIRAMA) {
+    result += VIRAMA;
+    return result.normalize('NFC');
   }
 
   // Apply vowel sign
@@ -138,8 +146,8 @@ export function validateRackUsage(
     if (idx === -1) {
       return { valid: false, usedIndices: [], error: `Consonant ${consonant} not in rack` };
     }
-    usedIndices.push(rack.indexOf(consonant));
-    available[idx] = ''; // Mark as used
+    usedIndices.push(idx); // Use same index from available (mirrors rack positions)
+    available[idx] = ''; // Mark as used so duplicates resolve to next occurrence
   }
 
   return { valid: true, usedIndices };

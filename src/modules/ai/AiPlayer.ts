@@ -26,7 +26,23 @@ export class AiPlayer {
   }
 
   async findMove(board: BoardState, rack: string[]): Promise<AiMove | null> {
-    const allMoves = this.generateAllMoves(board, rack);
+    // Add timeout protection for expensive AI calculations
+    const timeoutMs = this.difficulty >= 3 ? 10000 : 5000;
+    let allMoves: AiMove[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      allMoves = await Promise.race([
+        Promise.resolve(this.generateAllMoves(board, rack)),
+        new Promise<AiMove[]>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('AI timeout')), timeoutMs);
+        }),
+      ]);
+    } catch {
+      // AI timed out — return null (will auto-pass)
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     if (allMoves.length === 0) return null;
 

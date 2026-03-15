@@ -30,8 +30,15 @@ export const SOCKET_EVENTS = {
   GAME_ABANDON: 'game:abandon',
   GAME_TIMER: 'game:timer',
 
+  GAME_RECONNECT: 'game:reconnect',
+
   // Chat
   CHAT_MESSAGE: 'chat:message',
+
+  // Rematch
+  REMATCH_REQUEST: 'game:rematch-request',
+  REMATCH_ACCEPT: 'game:rematch-accept',
+  REMATCH_DECLINED: 'game:rematch-declined',
 
   // Errors
   ERROR: 'error',

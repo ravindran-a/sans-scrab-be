@@ -167,7 +167,7 @@ export function validatePlacement(
     const rows = placements.map(p => p.row).sort((a, b) => a - b);
     for (let r = rows[0]; r <= rows[rows.length - 1]; r++) {
       const isPlaced = placements.some(p => p.row === r);
-      const isExisting = board[col] !== undefined && board[r][col].akshara !== null;
+      const isExisting = board[r] !== undefined && board[r][col].akshara !== null;
       if (!isPlaced && !isExisting) {
         return { valid: false, error: 'Tiles must be contiguous (gap detected)' };
       }
@@ -241,6 +241,12 @@ export function extractWords(
     if (crossWord.cells.length > 1) {
       words.push(crossWord);
     }
+  }
+
+  // Single tile on first move: treat the akshara itself as the word
+  if (words.length === 0 && placements.length === 1) {
+    const cell = tempBoard[placements[0].row][placements[0].col];
+    words.push({ word: cell.akshara!, cells: [cell] });
   }
 
   return words;

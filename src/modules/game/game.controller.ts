@@ -88,6 +88,35 @@ router.get('/user/history', authMiddleware, async (req: Request, res: Response) 
   }
 });
 
+/**
+ * Preview a move: validate words and calculate score without committing.
+ * Returns word validity and potential score for each word formed.
+ */
+router.post('/:id/preview', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const { placements } = req.body;
+    const preview = await GameService.previewMove(req.params.id, userId, placements);
+    return res.json(preview);
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+/**
+ * Trigger AI move in an AI game. Called by FE after human move.
+ */
+router.post('/:id/ai-move', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId;
+    const game = await GameService.triggerAiMove(req.params.id);
+    if (!game) return res.status(400).json({ error: 'AI move not applicable' });
+    return res.json({ game: sanitizeGameForPlayer(game, userId) });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
+  }
+});
+
 router.post('/:id/abandon', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;

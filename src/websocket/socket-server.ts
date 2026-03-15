@@ -5,16 +5,95 @@ import { getRedisClient, getRedisSubscriber } from '../config/redis';
 import { AuthService } from '../modules/auth/auth.service';
 import { GameService } from '../modules/game/game.service';
 import { LeaderboardService } from '../modules/leaderboard/leaderboard.service';
-import { AiPlayer } from '../modules/ai/AiPlayer';
 import { RoomManager } from './room-manager';
 import { SOCKET_EVENTS } from './events';
 import { ENV } from '../config/env';
 import { UserModel } from '../modules/auth/auth.model';
+import { GameModel } from '../modules/game/game.model';
 
 interface AuthenticatedSocket extends Socket {
   userId: string;
   username: string;
   subscription: string;
+}
+
+// --- Turn Timer Manager ---
+const turnTimers = new Map<string, NodeJS.Timeout>();
+const timerIntervals = new Map<string, NodeJS.Timeout>();
+
+function startTurnTimer(io: Server, gameId: string, turnTimer: number, turnStartedAt: Date) {
+  clearTurnTimer(gameId);
+
+  const elapsed = Math.floor((Date.now() - new Date(turnStartedAt).getTime()) / 1000);
+  const remaining = Math.max(0, turnTimer - elapsed);
+
+  // Broadcast remaining time every second
+  const interval = setInterval(async () => {
+    const now = Date.now();
+    const game = await GameModel.findById(gameId).select('roomId turnStartedAt turnTimer status');
+    if (!game || game.status !== 'active') {
+      clearTurnTimer(gameId);
+      return;
+    }
+    const timeLeft = Math.max(0, game.turnTimer - Math.floor((now - new Date(game.turnStartedAt!).getTime()) / 1000));
+    if (game.roomId) {
+      io.to(game.roomId).emit(SOCKET_EVENTS.GAME_TIMER, { gameId, timeLeft });
+    }
+  }, 5000); // every 5s to reduce load
+  timerIntervals.set(gameId, interval);
+
+  // Auto-pass when time runs out
+  const timeout = setTimeout(async () => {
+    clearInterval(interval);
+    timerIntervals.delete(gameId);
+    turnTimers.delete(gameId);
+
+    try {
+      const game = await GameModel.findById(gameId);
+      if (!game || game.status !== 'active') return;
+
+      const currentPlayerIdx = game.currentTurn % game.players.length;
+      const currentPlayer = game.players[currentPlayerIdx];
+
+      const updatedGame = await GameService.passTurn(gameId, currentPlayer.userId);
+
+      if (updatedGame.roomId) {
+        broadcastGameState(io, updatedGame, updatedGame.roomId);
+        io.to(updatedGame.roomId).emit(SOCKET_EVENTS.GAME_TIMER, { gameId, timeLeft: 0, autoPass: true, player: currentPlayer.username });
+
+        if (updatedGame.status === 'finished') {
+          await handleGameOver(io, updatedGame);
+        } else {
+          startTurnTimer(io, gameId, updatedGame.turnTimer, updatedGame.turnStartedAt!);
+        }
+      }
+    } catch (err) {
+      console.error('[Timer] Auto-pass error:', err);
+    }
+  }, remaining * 1000);
+
+  turnTimers.set(gameId, timeout);
+}
+
+function clearTurnTimer(gameId: string) {
+  const timeout = turnTimers.get(gameId);
+  if (timeout) { clearTimeout(timeout); turnTimers.delete(gameId); }
+  const interval = timerIntervals.get(gameId);
+  if (interval) { clearInterval(interval); timerIntervals.delete(gameId); }
+}
+
+// --- Socket Rate Limiter ---
+const socketRateLimits = new Map<string, number[]>();
+const RATE_LIMIT_WINDOW = 10000; // 10 seconds
+const RATE_LIMIT_MAX = 30; // max 30 events per 10s
+
+function checkRateLimit(socketId: string): boolean {
+  const now = Date.now();
+  const timestamps = socketRateLimits.get(socketId) || [];
+  const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW);
+  recent.push(now);
+  socketRateLimits.set(socketId, recent);
+  return recent.length <= RATE_LIMIT_MAX;
 }
 
 export function initSocketServer(httpServer: HttpServer): Server {
@@ -63,9 +142,20 @@ export function initSocketServer(httpServer: HttpServer): Server {
     const socket = rawSocket as AuthenticatedSocket;
     console.log(`[Socket] ${socket.username} connected`);
 
+    // Rate limit wrapper
+    const rateLimited = (handler: (...args: any[]) => Promise<void> | void) => {
+      return (...args: any[]) => {
+        if (!checkRateLimit(socket.id)) {
+          socket.emit(SOCKET_EVENTS.ERROR, { message: 'Rate limit exceeded. Please slow down.' });
+          return;
+        }
+        return handler(...args);
+      };
+    };
+
     // --- Room Management ---
 
-    socket.on(SOCKET_EVENTS.CREATE_ROOM, async (data: { isPrivate?: boolean; turnTimer?: number }) => {
+    socket.on(SOCKET_EVENTS.CREATE_ROOM, rateLimited(async (data: { isPrivate?: boolean; turnTimer?: number }) => {
       try {
         const room = await RoomManager.createRoom(
           socket.userId,
@@ -78,9 +168,9 @@ export function initSocketServer(httpServer: HttpServer): Server {
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.JOIN_ROOM, async (data: { roomId: string }) => {
+    socket.on(SOCKET_EVENTS.JOIN_ROOM, rateLimited(async (data: { roomId: string }) => {
       try {
         const room = await RoomManager.joinRoom(data.roomId, socket.userId, socket.username);
         socket.join(room.id);
@@ -124,13 +214,16 @@ export function initSocketServer(httpServer: HttpServer): Server {
               }
             }
           }
+
+          // Start turn timer
+          startTurnTimer(io, joinedGame._id.toString(), joinedGame.turnTimer, joinedGame.turnStartedAt!);
         }
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.LEAVE_ROOM, async (data: { roomId: string }) => {
+    socket.on(SOCKET_EVENTS.LEAVE_ROOM, rateLimited(async (data: { roomId: string }) => {
       try {
         const room = await RoomManager.leaveRoom(data.roomId, socket.userId);
         socket.leave(data.roomId);
@@ -141,20 +234,20 @@ export function initSocketServer(httpServer: HttpServer): Server {
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.ROOM_LIST, async () => {
+    socket.on(SOCKET_EVENTS.ROOM_LIST, rateLimited(async () => {
       try {
         const rooms = await RoomManager.getPublicRooms();
         socket.emit(SOCKET_EVENTS.ROOM_LIST, { rooms });
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
     // --- Matchmaking ---
 
-    socket.on(SOCKET_EVENTS.FIND_MATCH, async () => {
+    socket.on(SOCKET_EVENTS.FIND_MATCH, rateLimited(async () => {
       try {
         const user = await UserModel.findById(socket.userId);
         if (!user) throw new Error('User not found');
@@ -201,6 +294,9 @@ export function initSocketServer(httpServer: HttpServer): Server {
               });
             }
           }
+
+          // Start turn timer
+          startTurnTimer(io, joinedGame._id.toString(), joinedGame.turnTimer, joinedGame.turnStartedAt!);
         } else {
           await RoomManager.addToMatchmaking(socket.userId, socket.username, user.elo);
           socket.emit(SOCKET_EVENTS.FIND_MATCH, { status: 'searching' });
@@ -208,15 +304,15 @@ export function initSocketServer(httpServer: HttpServer): Server {
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.MATCH_CANCEL, async () => {
+    socket.on(SOCKET_EVENTS.MATCH_CANCEL, rateLimited(async () => {
       await RoomManager.removeFromMatchmaking(socket.userId);
-    });
+    }));
 
-    // --- Game Actions (Anti-cheat: client sends rack indices, not characters) ---
+    // --- Game Actions ---
 
-    socket.on(SOCKET_EVENTS.GAME_MOVE, async (data: {
+    socket.on(SOCKET_EVENTS.GAME_MOVE, rateLimited(async (data: {
       gameId: string;
       placements: { row: number; col: number; akshara: string }[];
       rackIndices: number[];
@@ -245,7 +341,11 @@ export function initSocketServer(httpServer: HttpServer): Server {
 
           // Check game over
           if (game.status === 'finished') {
+            clearTurnTimer(data.gameId);
             await handleGameOver(io, game);
+          } else {
+            // Restart turn timer for next player
+            startTurnTimer(io, data.gameId, game.turnTimer, game.turnStartedAt!);
           }
         } else {
           socket.emit(SOCKET_EVENTS.GAME_MOVE_RESULT, {
@@ -257,14 +357,20 @@ export function initSocketServer(httpServer: HttpServer): Server {
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.GAME_PASS, async (data: { gameId: string }) => {
+    socket.on(SOCKET_EVENTS.GAME_PASS, rateLimited(async (data: { gameId: string }) => {
       try {
         const game = await GameService.passTurn(data.gameId, socket.userId);
         const roomId = game.roomId;
         if (roomId) {
           broadcastGameState(io, game, roomId);
+          if (game.status === 'finished') {
+            clearTurnTimer(data.gameId);
+            await handleGameOver(io, game);
+          } else {
+            startTurnTimer(io, data.gameId, game.turnTimer, game.turnStartedAt!);
+          }
         } else {
           socket.emit(SOCKET_EVENTS.GAME_STATE, {
             game: sanitizeGameForPlayer(game, socket.userId),
@@ -273,40 +379,188 @@ export function initSocketServer(httpServer: HttpServer): Server {
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.GAME_EXCHANGE, async (data: { gameId: string; rackIndices: number[] }) => {
+    socket.on(SOCKET_EVENTS.GAME_EXCHANGE, rateLimited(async (data: { gameId: string; rackIndices: number[] }) => {
       try {
         const game = await GameService.exchangeTiles(data.gameId, socket.userId, data.rackIndices);
-        socket.emit(SOCKET_EVENTS.GAME_STATE, {
-          game: sanitizeGameForPlayer(game, socket.userId),
-        });
+        const roomId = game.roomId;
+        if (roomId) {
+          // Broadcast to all players (opponent sees updated turn/bag count)
+          broadcastGameState(io, game, roomId);
+          // Restart timer for next player
+          startTurnTimer(io, data.gameId, game.turnTimer, game.turnStartedAt!);
+        } else {
+          socket.emit(SOCKET_EVENTS.GAME_STATE, {
+            game: sanitizeGameForPlayer(game, socket.userId),
+          });
+        }
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
 
-    socket.on(SOCKET_EVENTS.GAME_ABANDON, async (data: { gameId: string }) => {
+    socket.on(SOCKET_EVENTS.GAME_ABANDON, rateLimited(async (data: { gameId: string }) => {
       try {
         const game = await GameService.abandonGame(data.gameId, socket.userId);
+        clearTurnTimer(data.gameId);
         if (game.roomId) {
           io.to(game.roomId).emit(SOCKET_EVENTS.GAME_OVER, {
             game: sanitizeGameForPlayer(game, socket.userId),
             reason: 'abandoned',
             winner: game.winner,
+            abandonedBy: socket.username,
           });
+          await handleGameOver(io, game);
           await RoomManager.deleteRoom(game.roomId);
         }
       } catch (err: any) {
         socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
       }
-    });
+    }));
+
+    // --- Chat ---
+
+    socket.on(SOCKET_EVENTS.CHAT_MESSAGE, rateLimited(async (data: { roomId: string; message: string }) => {
+      if (!data.message || data.message.length > 200) return;
+      io.to(data.roomId).emit(SOCKET_EVENTS.CHAT_MESSAGE, {
+        userId: socket.userId,
+        username: socket.username,
+        message: data.message.trim(),
+        timestamp: Date.now(),
+      });
+    }));
+
+    // --- Rematch ---
+
+    socket.on(SOCKET_EVENTS.REMATCH_REQUEST, rateLimited(async (data: { roomId: string; gameId: string }) => {
+      io.to(data.roomId).emit(SOCKET_EVENTS.REMATCH_REQUEST, {
+        requestedBy: socket.userId,
+        username: socket.username,
+      });
+    }));
+
+    socket.on(SOCKET_EVENTS.REMATCH_ACCEPT, rateLimited(async (data: { roomId: string; oldGameId: string }) => {
+      try {
+        const oldRoom = await RoomManager.getRoom(data.roomId);
+        if (!oldRoom || oldRoom.players.length < 2) {
+          socket.emit(SOCKET_EVENTS.ERROR, { message: 'Room no longer valid' });
+          return;
+        }
+
+        // Create a new game with the same players
+        const game = await GameService.createGame({
+          mode: 'multiplayer',
+          userId: oldRoom.players[0].userId,
+          username: oldRoom.players[0].username,
+          roomId: data.roomId,
+          turnTimer: oldRoom.turnTimer,
+        });
+
+        const joinedGame = await GameService.joinGame(
+          game._id.toString(),
+          oldRoom.players[1].userId,
+          oldRoom.players[1].username
+        );
+
+        oldRoom.gameId = joinedGame._id.toString();
+        oldRoom.status = 'playing';
+        await RoomManager.updateRoom(oldRoom);
+
+        io.to(data.roomId).emit(SOCKET_EVENTS.GAME_START, {
+          gameId: joinedGame._id.toString(),
+          room: oldRoom,
+        });
+
+        // Send personalized game states
+        for (const player of oldRoom.players) {
+          const sockets = await io.in(data.roomId).fetchSockets();
+          for (const s of sockets) {
+            const as = s as unknown as AuthenticatedSocket;
+            if (as.userId === player.userId) {
+              as.emit(SOCKET_EVENTS.GAME_STATE, {
+                game: sanitizeGameForPlayer(joinedGame, player.userId),
+              });
+            }
+          }
+        }
+
+        startTurnTimer(io, joinedGame._id.toString(), joinedGame.turnTimer, joinedGame.turnStartedAt!);
+      } catch (err: any) {
+        socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
+      }
+    }));
+
+    // --- Reconnect ---
+
+    socket.on(SOCKET_EVENTS.GAME_RECONNECT, rateLimited(async (data: { gameId: string }) => {
+      try {
+        const game = await GameService.getGame(data.gameId);
+        if (!game) return;
+
+        const player = game.players.find((p: any) => p.userId === socket.userId);
+        if (player) {
+          player.connected = true;
+          await (game as any).save();
+
+          // Rejoin room if exists
+          if (game.roomId) {
+            socket.join(game.roomId);
+            // Notify opponent of reconnection
+            io.to(game.roomId).emit(SOCKET_EVENTS.GAME_STATE, {
+              game: sanitizeGameForPlayer(game, socket.userId),
+              reconnected: socket.username,
+            });
+          }
+
+          // Send current game state to reconnecting player
+          socket.emit(SOCKET_EVENTS.GAME_STATE, {
+            game: sanitizeGameForPlayer(game, socket.userId),
+          });
+
+          // Send current timer (multiplayer only — solo/AI don't have turn timers)
+          if (game.mode === 'multiplayer' && game.status === 'active' && game.turnStartedAt) {
+            const timeLeft = Math.max(0, game.turnTimer - Math.floor((Date.now() - new Date(game.turnStartedAt).getTime()) / 1000));
+            socket.emit(SOCKET_EVENTS.GAME_TIMER, { gameId: data.gameId, timeLeft });
+          }
+        }
+      } catch (err: any) {
+        socket.emit(SOCKET_EVENTS.ERROR, { message: err.message });
+      }
+    }));
 
     // --- Disconnect ---
 
     socket.on(SOCKET_EVENTS.DISCONNECT, async () => {
       console.log(`[Socket] ${socket.username} disconnected`);
       await RoomManager.removeFromMatchmaking(socket.userId);
+      socketRateLimits.delete(socket.id);
+
+      // Find active games for this user and mark disconnected
+      try {
+        const activeGames = await GameModel.find({
+          'players.userId': socket.userId,
+          status: 'active',
+        });
+
+        for (const game of activeGames) {
+          const player = game.players.find((p: any) => p.userId === socket.userId);
+          if (player) {
+            player.connected = false;
+            await game.save();
+
+            // Notify opponent via room
+            if (game.roomId) {
+              io.to(game.roomId).emit(SOCKET_EVENTS.GAME_STATE, {
+                game: sanitizeGameForPlayer(game, ''),
+                disconnected: socket.username,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Socket] Disconnect cleanup error:', err);
+      }
     });
   });
 
@@ -324,6 +578,8 @@ async function broadcastGameState(io: Server, game: any, roomId: string) {
 }
 
 async function handleGameOver(io: Server, game: any) {
+  clearTurnTimer(game._id?.toString() || '');
+
   if (game.mode === 'multiplayer' && game.winner && game.winner !== 'ai') {
     const loserId = game.players.find((p: any) => p.userId !== game.winner)?.userId;
     if (loserId) {
@@ -343,7 +599,7 @@ async function handleGameOver(io: Server, game: any) {
       players: game.players,
       eloChange: game.eloChange,
     });
-    await RoomManager.deleteRoom(game.roomId);
+    // Don't delete room immediately — allow rematch
   }
 }
 
