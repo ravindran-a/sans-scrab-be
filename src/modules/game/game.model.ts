@@ -1,7 +1,7 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Document, Schema } from "mongoose";
 
-export type GameMode = 'single' | 'ai' | 'multiplayer';
-export type GameStatus = 'waiting' | 'active' | 'finished' | 'abandoned';
+export type GameMode = "single" | "ai" | "multiplayer";
+export type GameStatus = "waiting" | "active" | "finished" | "abandoned";
 
 export interface PlayerState {
   userId: string;
@@ -39,8 +39,16 @@ export interface IGame extends Document {
 
 const GameSchema = new Schema<IGame>(
   {
-    mode: { type: String, enum: ['single', 'ai', 'multiplayer'], required: true },
-    status: { type: String, enum: ['waiting', 'active', 'finished', 'abandoned'], default: 'waiting' },
+    mode: {
+      type: String,
+      enum: ["single", "ai", "multiplayer"],
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: ["waiting", "active", "finished", "abandoned"],
+      default: "waiting",
+    },
     board: { type: Schema.Types.Mixed, required: true },
     players: [
       {
@@ -69,10 +77,10 @@ const GameSchema = new Schema<IGame>(
     winner: { type: String },
     eloChange: { type: Schema.Types.Mixed },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 GameSchema.index({ status: 1 });
-GameSchema.index({ 'players.userId': 1 });
+GameSchema.index({ "players.userId": 1 });
 
-export const GameModel = mongoose.model<IGame>('Game', GameSchema);
+export const GameModel = mongoose.model<IGame>("Game", GameSchema);

@@ -1,5 +1,5 @@
-import mongoose from 'mongoose';
-import { ENV } from './env';
+import mongoose from "mongoose";
+import { ENV } from "./env";
 
 export async function connectDB(): Promise<void> {
   try {
@@ -7,9 +7,9 @@ export async function connectDB(): Promise<void> {
       tls: true,
       tlsAllowInvalidCertificates: true,
     });
-    console.log('[DB] MongoDB connected');
+    console.log("[DB] MongoDB connected");
   } catch (err) {
-    console.error('[DB] MongoDB connection error:', err);
+    console.error("[DB] MongoDB connection error:", err);
     process.exit(1);
   }
 }

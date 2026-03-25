@@ -1,5 +1,5 @@
-import { DictionaryModel, IDictionaryEntry } from './dictionary.model';
-import { normalizeText } from '../../engine/GraphemeSplitter';
+import { normalizeText } from "../../engine/GraphemeSplitter";
+import { DictionaryModel, IDictionaryEntry } from "./dictionary.model";
 
 /**
  * In-memory dictionary for fast lookups.
@@ -41,8 +41,14 @@ export function getAllWords(): string[] {
   return wordList;
 }
 
-export function getAllEntries(): { word: string; root: string; meaning: { en: string; sa: string }; grammar: { type: string; derivation: string }; difficulty: number }[] {
-  return Array.from(wordMap.values()).map(e => ({
+export function getAllEntries(): {
+  word: string;
+  root: string;
+  meaning: { en: string; sa: string };
+  grammar: { type: string; derivation: string };
+  difficulty: number;
+}[] {
+  return Array.from(wordMap.values()).map((e) => ({
     word: e.word,
     root: e.root,
     meaning: e.meaning,
@@ -52,7 +58,7 @@ export function getAllEntries(): { word: string; root: string; meaning: { en: st
 }
 
 export function getWordsByDifficulty(difficulty: number): string[] {
-  return wordList.filter(w => {
+  return wordList.filter((w) => {
     const entry = wordMap.get(w);
     return entry && entry.difficulty <= difficulty;
   });

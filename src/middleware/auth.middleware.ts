@@ -1,14 +1,18 @@
-import { Request, Response, NextFunction } from 'express';
-import { AuthService } from '../modules/auth/auth.service';
+import { NextFunction, Request, Response } from "express";
+import { AuthService } from "../modules/auth/auth.service";
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+export function authMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Access token required' });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Access token required" });
     return;
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(" ")[1];
 
   try {
     const decoded = AuthService.verifyAccessToken(token);
@@ -17,7 +21,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     (req as any).subscription = decoded.subscription;
     next();
   } catch {
-    res.status(401).json({ error: 'Invalid or expired token' });
+    res.status(401).json({ error: "Invalid or expired token" });
   }
 }
 
@@ -26,7 +30,7 @@ export function subscriptionMiddleware(...allowedPlans: string[]) {
     const subscription = (req as any).subscription;
     if (!allowedPlans.includes(subscription)) {
       res.status(403).json({
-        error: 'Subscription required',
+        error: "Subscription required",
         required: allowedPlans,
         current: subscription,
       });

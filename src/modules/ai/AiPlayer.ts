@@ -1,7 +1,13 @@
-import { BoardState, BOARD_SIZE, TilePlacement, validatePlacement, extractWords } from '../../engine/Board';
-import { calculateMoveScore } from '../../engine/Scoring';
-import { splitAksharas, normalizeText } from '../../engine/GraphemeSplitter';
-import { DictionaryService } from '../dictionary/dictionary.service';
+import {
+  BOARD_SIZE,
+  BoardState,
+  extractWords,
+  TilePlacement,
+  validatePlacement,
+} from "../../engine/Board";
+import { normalizeText, splitAksharas } from "../../engine/GraphemeSplitter";
+import { calculateMoveScore } from "../../engine/Scoring";
+import { DictionaryService } from "../dictionary/dictionary.service";
 
 export interface AiMove {
   placements: TilePlacement[];
@@ -33,7 +39,7 @@ export class AiPlayer {
       allMoves = await Promise.race([
         Promise.resolve(this.generateAllMoves(board, rack)),
         new Promise<AiMove[]>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('AI timeout')), timeoutMs);
+          timer = setTimeout(() => reject(new Error("AI timeout")), timeoutMs);
         }),
       ]);
     } catch {
@@ -68,7 +74,10 @@ export class AiPlayer {
    * Level 2: Pick the highest-scoring move.
    */
   private level2(moves: AiMove[]): AiMove {
-    return moves.reduce((best, move) => move.score > best.score ? move : best, moves[0]);
+    return moves.reduce(
+      (best, move) => (move.score > best.score ? move : best),
+      moves[0],
+    );
   }
 
   /**
@@ -108,7 +117,12 @@ export class AiPlayer {
       eval_ += Math.max(0, 5 - dist);
 
       // Penalty for opening triple word lines to opponent
-      if (p.row === 0 || p.row === BOARD_SIZE - 1 || p.col === 0 || p.col === BOARD_SIZE - 1) {
+      if (
+        p.row === 0 ||
+        p.row === BOARD_SIZE - 1 ||
+        p.col === 0 ||
+        p.col === BOARD_SIZE - 1
+      ) {
         eval_ -= 3;
       }
     }
@@ -122,7 +136,9 @@ export class AiPlayer {
    */
   private generateAllMoves(board: BoardState, rack: string[]): AiMove[] {
     const moves: AiMove[] = [];
-    const allWords = DictionaryService.getWordsByDifficulty(this.difficulty <= 1 ? 2 : 5);
+    const allWords = DictionaryService.getWordsByDifficulty(
+      this.difficulty <= 1 ? 2 : 5,
+    );
     const isEmpty = this.isBoardEmpty(board);
 
     for (const word of allWords) {
@@ -141,16 +157,21 @@ export class AiPlayer {
 
         // Verify all formed words are valid
         const formedWords = extractWords(board, placements);
-        const allValid = formedWords.every(fw => DictionaryService.isValidWord(normalizeText(fw.word)));
+        const allValid = formedWords.every((fw) =>
+          DictionaryService.isValidWord(normalizeText(fw.word)),
+        );
         if (!allValid) continue;
 
-        const { totalScore, wordScores } = calculateMoveScore(board, placements);
+        const { totalScore, wordScores } = calculateMoveScore(
+          board,
+          placements,
+        );
 
         moves.push({
           placements,
           rackIndices: rackUsage.indices,
           score: totalScore,
-          words: wordScores.map(ws => ws.word),
+          words: wordScores.map((ws) => ws.word),
         });
       }
     }
@@ -164,15 +185,19 @@ export class AiPlayer {
    */
   private canFormWord(
     aksharas: string[],
-    rack: string[]
+    rack: string[],
   ): { indices: number[] } | null {
-    const availableRack = rack.map((c, i) => ({ char: c, index: i, used: false }));
+    const availableRack = rack.map((c, i) => ({
+      char: c,
+      index: i,
+      used: false,
+    }));
     const usedIndices: number[] = [];
 
     for (const akshara of aksharas) {
       // Extract consonants from this akṣara
       const consonantsNeeded: string[] = [];
-      for (const ch of Array.from(akshara.normalize('NFC'))) {
+      for (const ch of Array.from(akshara.normalize("NFC"))) {
         const code = ch.charCodeAt(0);
         if (code >= 0x0915 && code <= 0x0939) {
           consonantsNeeded.push(ch);
@@ -181,7 +206,9 @@ export class AiPlayer {
 
       // Try to find each consonant in the rack
       for (const consonant of consonantsNeeded) {
-        const found = availableRack.find(r => r.char === consonant && !r.used);
+        const found = availableRack.find(
+          (r) => r.char === consonant && !r.used,
+        );
         if (!found) return null;
         found.used = true;
         usedIndices.push(found.index);
@@ -197,7 +224,7 @@ export class AiPlayer {
   private getPlacementPositions(
     board: BoardState,
     aksharas: string[],
-    isEmpty: boolean
+    isEmpty: boolean,
   ): TilePlacement[][] {
     const results: TilePlacement[][] = [];
     const center = Math.floor(BOARD_SIZE / 2);
@@ -225,8 +252,11 @@ export class AiPlayer {
           if (valid && placements.length > 0) {
             if (isEmpty) {
               // Must cover center
-              const coversCenter = placements.some(p => p.row === center && p.col === center) ||
-                (row === center && col <= center && col + aksharas.length > center);
+              const coversCenter =
+                placements.some((p) => p.row === center && p.col === center) ||
+                (row === center &&
+                  col <= center &&
+                  col + aksharas.length > center);
               if (coversCenter) results.push(placements);
             } else {
               results.push(placements);
@@ -252,8 +282,11 @@ export class AiPlayer {
 
           if (valid && placements.length > 0) {
             if (isEmpty) {
-              const coversCenter = placements.some(p => p.row === center && p.col === center) ||
-                (col === center && row <= center && row + aksharas.length > center);
+              const coversCenter =
+                placements.some((p) => p.row === center && p.col === center) ||
+                (col === center &&
+                  row <= center &&
+                  row + aksharas.length > center);
               if (coversCenter) results.push(placements);
             } else {
               results.push(placements);

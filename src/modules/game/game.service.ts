@@ -1,10 +1,28 @@
-import { GameModel, IGame, GameMode, PlayerState, MoveRecord } from './game.model';
-import { SanskritEngine, RACK_SIZE, createTileBag, drawFromBag } from '../../engine/SanskritEngine';
-import { createBoard, BoardState, TilePlacement, validatePlacement, applyPlacements, extractWords } from '../../engine/Board';
-import { calculateMoveScore } from '../../engine/Scoring';
-import { DictionaryService } from '../dictionary/dictionary.service';
-import { normalizeText } from '../../engine/GraphemeSplitter';
-import { AiPlayer } from '../ai/AiPlayer';
+import {
+  BoardState,
+  TilePlacement,
+  applyPlacements,
+  createBoard,
+  extractWords,
+  validatePlacement,
+} from "../../engine/Board";
+import { normalizeText } from "../../engine/GraphemeSplitter";
+import {
+  RACK_SIZE,
+  SanskritEngine,
+  createTileBag,
+  drawFromBag,
+} from "../../engine/SanskritEngine";
+import { calculateMoveScore } from "../../engine/Scoring";
+import { AiPlayer } from "../ai/AiPlayer";
+import { DictionaryService } from "../dictionary/dictionary.service";
+import {
+  GameMode,
+  GameModel,
+  IGame,
+  MoveRecord,
+  PlayerState,
+} from "./game.model";
 
 export interface CreateGameOptions {
   mode: GameMode;
@@ -35,10 +53,13 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
   let finalBag = remaining;
 
   // For AI mode, create AI player
-  if (options.mode === 'ai') {
-    const { drawn: aiRack, remaining: afterAi } = drawFromBag(remaining, RACK_SIZE);
+  if (options.mode === "ai") {
+    const { drawn: aiRack, remaining: afterAi } = drawFromBag(
+      remaining,
+      RACK_SIZE,
+    );
     players.push({
-      userId: 'ai',
+      userId: "ai",
       username: `AI-Level-${options.aiDifficulty || 1}`,
       rack: aiRack,
       score: 0,
@@ -49,7 +70,7 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
 
   const game = await GameModel.create({
     mode: options.mode,
-    status: options.mode === 'multiplayer' ? 'waiting' : 'active',
+    status: options.mode === "multiplayer" ? "waiting" : "active",
     board,
     players,
     currentTurn: 0,
@@ -64,12 +85,18 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
   return game;
 }
 
-export async function joinGame(gameId: string, userId: string, username: string): Promise<IGame> {
+export async function joinGame(
+  gameId: string,
+  userId: string,
+  username: string,
+): Promise<IGame> {
   const game = await GameModel.findById(gameId);
-  if (!game) throw new Error('Game not found');
-  if (game.status !== 'waiting') throw new Error('Game is not accepting players');
-  if (game.players.length >= 2) throw new Error('Game is full');
-  if (game.players.some(p => p.userId === userId)) throw new Error('Already in game');
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "waiting")
+    throw new Error("Game is not accepting players");
+  if (game.players.length >= 2) throw new Error("Game is full");
+  if (game.players.some((p) => p.userId === userId))
+    throw new Error("Already in game");
 
   const { drawn: rack, remaining } = drawFromBag(game.tileBag, RACK_SIZE);
 
@@ -81,7 +108,7 @@ export async function joinGame(gameId: string, userId: string, username: string)
     connected: true,
   });
   game.tileBag = remaining;
-  game.status = 'active';
+  game.status = "active";
   game.turnStartedAt = new Date();
 
   await game.save();
@@ -102,14 +129,14 @@ export async function makeMove(input: MoveInput): Promise<{
 }> {
   // Optimistic locking: read current turn, validate, then atomic update
   const game = await GameModel.findById(input.gameId);
-  if (!game) throw new Error('Game not found');
-  if (game.status !== 'active') throw new Error('Game is not active');
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "active") throw new Error("Game is not active");
   const expectedTurn = game.currentTurn;
 
-  const playerIndex = game.players.findIndex(p => p.userId === input.userId);
-  if (playerIndex === -1) throw new Error('Player not in game');
+  const playerIndex = game.players.findIndex((p) => p.userId === input.userId);
+  if (playerIndex === -1) throw new Error("Player not in game");
   if (game.currentTurn % game.players.length !== playerIndex) {
-    throw new Error('Not your turn');
+    throw new Error("Not your turn");
   }
 
   const player = game.players[playerIndex];
@@ -118,12 +145,12 @@ export async function makeMove(input: MoveInput): Promise<{
   // Anti-cheat: verify rack indices
   for (const idx of input.rackIndices) {
     if (idx < 0 || idx >= player.rack.length) {
-      throw new Error('Invalid rack index');
+      throw new Error("Invalid rack index");
     }
   }
 
   // Anti-cheat: verify aksharas can be formed from the rack consonants at given indices
-  const rackConsonants = input.rackIndices.map(idx => player.rack[idx]);
+  const rackConsonants = input.rackIndices.map((idx) => player.rack[idx]);
   const neededConsonants: string[] = [];
   for (const placement of input.placements) {
     const normalized = normalizeText(placement.akshara);
@@ -138,9 +165,11 @@ export async function makeMove(input: MoveInput): Promise<{
   // Sort both arrays and compare — all needed consonants must match rack consonants used
   const sortedNeeded = [...neededConsonants].sort();
   const sortedRack = [...rackConsonants].sort();
-  if (sortedNeeded.length !== sortedRack.length ||
-      sortedNeeded.some((c, i) => c !== sortedRack[i])) {
-    throw new Error('Placed aksharas do not match the rack consonants');
+  if (
+    sortedNeeded.length !== sortedRack.length ||
+    sortedNeeded.some((c, i) => c !== sortedRack[i])
+  ) {
+    throw new Error("Placed aksharas do not match the rack consonants");
   }
 
   // Validate placements
@@ -159,7 +188,10 @@ export async function makeMove(input: MoveInput): Promise<{
   }
 
   // Calculate score
-  const { totalScore, wordScores } = calculateMoveScore(board, input.placements);
+  const { totalScore, wordScores } = calculateMoveScore(
+    board,
+    input.placements,
+  );
 
   // Apply to board
   const newBoard = applyPlacements(board, input.placements, game.moves.length);
@@ -187,7 +219,7 @@ export async function makeMove(input: MoveInput): Promise<{
   const move: MoveRecord = {
     playerId: input.userId,
     placements: input.placements,
-    wordsFormed: words.map(w => w.word),
+    wordsFormed: words.map((w) => w.word),
     score: totalScore,
     timestamp: new Date(),
   };
@@ -195,7 +227,7 @@ export async function makeMove(input: MoveInput): Promise<{
 
   // Check end conditions
   if (game.tileBag.length === 0 && newRack.length === 0) {
-    game.status = 'finished';
+    game.status = "finished";
     determineWinner(game);
   }
 
@@ -205,14 +237,17 @@ export async function makeMove(input: MoveInput): Promise<{
     saved = await GameModel.findOneAndUpdate(
       { _id: game._id, currentTurn: expectedTurn },
       game.toObject(),
-      { new: true }
+      { new: true },
     );
     if (saved) break;
     // Brief pause before retry
-    if (attempt < 2) await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+    if (attempt < 2)
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
   }
   if (!saved) {
-    throw new Error('Move conflict — another move was processed. Please refresh.');
+    throw new Error(
+      "Move conflict — another move was processed. Please refresh.",
+    );
   }
 
   return { game: saved, moveScore: totalScore, wordsFormed: wordScores };
@@ -220,13 +255,13 @@ export async function makeMove(input: MoveInput): Promise<{
 
 export async function passTurn(gameId: string, userId: string): Promise<IGame> {
   const game = await GameModel.findById(gameId);
-  if (!game) throw new Error('Game not found');
-  if (game.status !== 'active') throw new Error('Game is not active');
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "active") throw new Error("Game is not active");
 
-  const playerIndex = game.players.findIndex(p => p.userId === userId);
-  if (playerIndex === -1) throw new Error('Player not in game');
+  const playerIndex = game.players.findIndex((p) => p.userId === userId);
+  if (playerIndex === -1) throw new Error("Player not in game");
   if (game.currentTurn % game.players.length !== playerIndex) {
-    throw new Error('Not your turn');
+    throw new Error("Not your turn");
   }
 
   game.currentTurn += 1;
@@ -243,13 +278,13 @@ export async function passTurn(gameId: string, userId: string): Promise<IGame> {
 
   // Check if consecutive passes should end the game
   const lastTwo = game.moves.slice(-2);
-  if (lastTwo.length === 2 && lastTwo.every(m => m.placements.length === 0)) {
+  if (lastTwo.length === 2 && lastTwo.every((m) => m.placements.length === 0)) {
     // Solo mode: 2 consecutive passes by the same (only) player ends the game
     // Multiplayer/AI: 2 consecutive passes from different players ends the game
     const isSoloMode = game.players.length === 1;
     const differentPlayers = lastTwo[0].playerId !== lastTwo[1].playerId;
     if (isSoloMode || differentPlayers) {
-      game.status = 'finished';
+      game.status = "finished";
       determineWinner(game);
     }
   }
@@ -261,20 +296,20 @@ export async function passTurn(gameId: string, userId: string): Promise<IGame> {
 export async function exchangeTiles(
   gameId: string,
   userId: string,
-  rackIndices: number[]
+  rackIndices: number[],
 ): Promise<IGame> {
   const game = await GameModel.findById(gameId);
-  if (!game) throw new Error('Game not found');
-  if (game.status !== 'active') throw new Error('Game is not active');
+  if (!game) throw new Error("Game not found");
+  if (game.status !== "active") throw new Error("Game is not active");
 
-  const playerIndex = game.players.findIndex(p => p.userId === userId);
-  if (playerIndex === -1) throw new Error('Player not in game');
+  const playerIndex = game.players.findIndex((p) => p.userId === userId);
+  if (playerIndex === -1) throw new Error("Player not in game");
   if (game.currentTurn % game.players.length !== playerIndex) {
-    throw new Error('Not your turn');
+    throw new Error("Not your turn");
   }
 
   if (game.tileBag.length < rackIndices.length) {
-    throw new Error('Not enough tiles in bag to exchange');
+    throw new Error("Not enough tiles in bag to exchange");
   }
 
   const player = game.players[playerIndex];
@@ -283,7 +318,7 @@ export async function exchangeTiles(
 
   const sortedIndices = [...rackIndices].sort((a, b) => b - a);
   for (const idx of sortedIndices) {
-    if (idx < 0 || idx >= newRack.length) throw new Error('Invalid rack index');
+    if (idx < 0 || idx >= newRack.length) throw new Error("Invalid rack index");
     returned.push(newRack[idx]);
     newRack.splice(idx, 1);
   }
@@ -318,7 +353,7 @@ export async function exchangeTiles(
 export async function previewMove(
   gameId: string,
   _userId: string,
-  placements: TilePlacement[]
+  placements: TilePlacement[],
 ): Promise<{
   valid: boolean;
   totalScore: number;
@@ -326,8 +361,10 @@ export async function previewMove(
   error?: string;
 }> {
   const game = await GameModel.findById(gameId);
-  if (!game) return { valid: false, totalScore: 0, words: [], error: 'Game not found' };
-  if (game.status !== 'active') return { valid: false, totalScore: 0, words: [], error: 'Game not active' };
+  if (!game)
+    return { valid: false, totalScore: 0, words: [], error: "Game not found" };
+  if (game.status !== "active")
+    return { valid: false, totalScore: 0, words: [], error: "Game not active" };
 
   const board = game.board as BoardState;
 
@@ -351,7 +388,9 @@ export async function previewMove(
     if (!isValid) allValid = false;
   }
 
-  const totalScore = allValid ? wordResults.reduce((sum, w) => sum + w.score, 0) : 0;
+  const totalScore = allValid
+    ? wordResults.reduce((sum, w) => sum + w.score, 0)
+    : 0;
 
   return { valid: allValid, totalScore, words: wordResults };
 }
@@ -361,8 +400,11 @@ function determineWinner(game: IGame): void {
   if (sorted.length >= 2 && sorted[0].score === sorted[1].score) {
     // Tiebreaker: player who played last loses (the other wins)
     // This rewards the player who finished first or forced the end
-    const lastMovePlayer = game.moves.length > 0 ? game.moves[game.moves.length - 1].playerId : null;
-    game.winner = sorted.find(p => p.userId !== lastMovePlayer)?.userId || sorted[0].userId;
+    const lastMovePlayer =
+      game.moves.length > 0 ? game.moves[game.moves.length - 1].playerId : null;
+    game.winner =
+      sorted.find((p) => p.userId !== lastMovePlayer)?.userId ||
+      sorted[0].userId;
   } else {
     game.winner = sorted[0].userId;
   }
@@ -373,15 +415,20 @@ export async function getGame(gameId: string): Promise<IGame | null> {
 }
 
 export async function getGamesByUser(userId: string): Promise<IGame[]> {
-  return GameModel.find({ 'players.userId': userId }).sort({ createdAt: -1 }).limit(20);
+  return GameModel.find({ "players.userId": userId })
+    .sort({ createdAt: -1 })
+    .limit(20);
 }
 
-export async function abandonGame(gameId: string, userId: string): Promise<IGame> {
+export async function abandonGame(
+  gameId: string,
+  userId: string,
+): Promise<IGame> {
   const game = await GameModel.findById(gameId);
-  if (!game) throw new Error('Game not found');
+  if (!game) throw new Error("Game not found");
 
-  game.status = 'abandoned';
-  const otherPlayer = game.players.find(p => p.userId !== userId);
+  game.status = "abandoned";
+  const otherPlayer = game.players.find((p) => p.userId !== userId);
   if (otherPlayer) {
     game.winner = otherPlayer.userId;
   }
@@ -395,9 +442,9 @@ export async function abandonGame(gameId: string, userId: string): Promise<IGame
  */
 export async function triggerAiMove(gameId: string): Promise<IGame | null> {
   const game = await GameModel.findById(gameId);
-  if (!game || game.status !== 'active' || game.mode !== 'ai') return null;
+  if (!game || game.status !== "active" || game.mode !== "ai") return null;
 
-  const aiPlayerIdx = game.players.findIndex(p => p.userId === 'ai');
+  const aiPlayerIdx = game.players.findIndex((p) => p.userId === "ai");
   if (aiPlayerIdx === -1) return null;
   if (game.currentTurn % game.players.length !== aiPlayerIdx) return null;
 
@@ -408,16 +455,18 @@ export async function triggerAiMove(gameId: string): Promise<IGame | null> {
 
   if (!move) {
     // AI can't make a move — auto-pass
-    return await passTurn(gameId, 'ai');
+    return await passTurn(gameId, "ai");
   }
 
   // AI makes its move
-  return (await makeMove({
-    gameId,
-    userId: 'ai',
-    placements: move.placements,
-    rackIndices: move.rackIndices,
-  })).game;
+  return (
+    await makeMove({
+      gameId,
+      userId: "ai",
+      placements: move.placements,
+      rackIndices: move.rackIndices,
+    })
+  ).game;
 }
 
 export const GameService = {

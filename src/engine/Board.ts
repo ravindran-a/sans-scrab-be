@@ -1,9 +1,15 @@
-import { isValidAkshara, normalizeText } from './GraphemeSplitter';
+import { isValidAkshara, normalizeText } from "./GraphemeSplitter";
 
 export const BOARD_SIZE = 11;
 export const CENTER = Math.floor(BOARD_SIZE / 2); // 5
 
-export type CellType = 'normal' | 'double_letter' | 'triple_letter' | 'double_word' | 'triple_word' | 'center';
+export type CellType =
+  | "normal"
+  | "double_letter"
+  | "triple_letter"
+  | "double_word"
+  | "triple_word"
+  | "center";
 
 export interface Cell {
   row: number;
@@ -20,50 +26,75 @@ export type BoardState = Cell[][];
  * Symmetric pattern inspired by classic Scrabble but adapted for smaller board.
  */
 function getCellType(row: number, col: number): CellType {
-  if (row === CENTER && col === CENTER) return 'center';
+  if (row === CENTER && col === CENTER) return "center";
 
   // Triple word scores — corners and mid-edges
   const tripleWord: [number, number][] = [
-    [0, 0], [0, 5], [0, 10],
-    [5, 0], [5, 10],
-    [10, 0], [10, 5], [10, 10],
+    [0, 0],
+    [0, 5],
+    [0, 10],
+    [5, 0],
+    [5, 10],
+    [10, 0],
+    [10, 5],
+    [10, 10],
   ];
-  if (tripleWord.some(([r, c]) => r === row && c === col)) return 'triple_word';
+  if (tripleWord.some(([r, c]) => r === row && c === col)) return "triple_word";
 
   // Double word scores — diagonal pattern
   const doubleWord: [number, number][] = [
-    [1, 1], [1, 9],
-    [2, 2], [2, 8],
-    [3, 3], [3, 7],
-    [4, 4], [4, 6],
-    [6, 4], [6, 6],
-    [7, 3], [7, 7],
-    [8, 2], [8, 8],
-    [9, 1], [9, 9],
+    [1, 1],
+    [1, 9],
+    [2, 2],
+    [2, 8],
+    [3, 3],
+    [3, 7],
+    [4, 4],
+    [4, 6],
+    [6, 4],
+    [6, 6],
+    [7, 3],
+    [7, 7],
+    [8, 2],
+    [8, 8],
+    [9, 1],
+    [9, 9],
   ];
-  if (doubleWord.some(([r, c]) => r === row && c === col)) return 'double_word';
+  if (doubleWord.some(([r, c]) => r === row && c === col)) return "double_word";
 
   // Triple letter scores
   const tripleLetter: [number, number][] = [
-    [0, 3], [0, 7],
-    [3, 0], [3, 10],
-    [7, 0], [7, 10],
-    [10, 3], [10, 7],
+    [0, 3],
+    [0, 7],
+    [3, 0],
+    [3, 10],
+    [7, 0],
+    [7, 10],
+    [10, 3],
+    [10, 7],
   ];
-  if (tripleLetter.some(([r, c]) => r === row && c === col)) return 'triple_letter';
+  if (tripleLetter.some(([r, c]) => r === row && c === col))
+    return "triple_letter";
 
   // Double letter scores
   const doubleLetter: [number, number][] = [
-    [1, 5], [5, 1],
-    [5, 9], [9, 5],
-    [2, 4], [2, 6],
-    [4, 2], [4, 8],
-    [6, 2], [6, 8],
-    [8, 4], [8, 6],
+    [1, 5],
+    [5, 1],
+    [5, 9],
+    [9, 5],
+    [2, 4],
+    [2, 6],
+    [4, 2],
+    [4, 8],
+    [6, 2],
+    [6, 8],
+    [8, 4],
+    [8, 6],
   ];
-  if (doubleLetter.some(([r, c]) => r === row && c === col)) return 'double_letter';
+  if (doubleLetter.some(([r, c]) => r === row && c === col))
+    return "double_letter";
 
-  return 'normal';
+  return "normal";
 }
 
 /**
@@ -109,10 +140,10 @@ export interface TilePlacement {
  */
 export function validatePlacement(
   board: BoardState,
-  placements: TilePlacement[]
+  placements: TilePlacement[],
 ): { valid: boolean; error?: string } {
   if (placements.length === 0) {
-    return { valid: false, error: 'No tiles placed' };
+    return { valid: false, error: "No tiles placed" };
   }
 
   // Validate each akṣara
@@ -133,67 +164,85 @@ export function validatePlacement(
   // Check cells are empty
   for (const p of placements) {
     if (board[p.row][p.col].akshara !== null) {
-      return { valid: false, error: `Cell (${p.row}, ${p.col}) is already occupied` };
+      return {
+        valid: false,
+        error: `Cell (${p.row}, ${p.col}) is already occupied`,
+      };
     }
   }
 
   // Check no duplicate positions
-  const posSet = new Set(placements.map(p => `${p.row},${p.col}`));
+  const posSet = new Set(placements.map((p) => `${p.row},${p.col}`));
   if (posSet.size !== placements.length) {
-    return { valid: false, error: 'Duplicate positions' };
+    return { valid: false, error: "Duplicate positions" };
   }
 
   // Check all in same row or same column
-  const allSameRow = placements.every(p => p.row === placements[0].row);
-  const allSameCol = placements.every(p => p.col === placements[0].col);
+  const allSameRow = placements.every((p) => p.row === placements[0].row);
+  const allSameCol = placements.every((p) => p.col === placements[0].col);
 
   if (!allSameRow && !allSameCol) {
-    return { valid: false, error: 'Tiles must be in a single row or column' };
+    return { valid: false, error: "Tiles must be in a single row or column" };
   }
 
   // Check contiguity (including existing tiles)
   if (allSameRow) {
     const row = placements[0].row;
-    const cols = placements.map(p => p.col).sort((a, b) => a - b);
+    const cols = placements.map((p) => p.col).sort((a, b) => a - b);
     for (let c = cols[0]; c <= cols[cols.length - 1]; c++) {
-      const isPlaced = placements.some(p => p.col === c);
+      const isPlaced = placements.some((p) => p.col === c);
       const isExisting = board[row][c].akshara !== null;
       if (!isPlaced && !isExisting) {
-        return { valid: false, error: 'Tiles must be contiguous (gap detected)' };
+        return {
+          valid: false,
+          error: "Tiles must be contiguous (gap detected)",
+        };
       }
     }
   } else {
     const col = placements[0].col;
-    const rows = placements.map(p => p.row).sort((a, b) => a - b);
+    const rows = placements.map((p) => p.row).sort((a, b) => a - b);
     for (let r = rows[0]; r <= rows[rows.length - 1]; r++) {
-      const isPlaced = placements.some(p => p.row === r);
-      const isExisting = board[r] !== undefined && board[r][col].akshara !== null;
+      const isPlaced = placements.some((p) => p.row === r);
+      const isExisting =
+        board[r] !== undefined && board[r][col].akshara !== null;
       if (!isPlaced && !isExisting) {
-        return { valid: false, error: 'Tiles must be contiguous (gap detected)' };
+        return {
+          valid: false,
+          error: "Tiles must be contiguous (gap detected)",
+        };
       }
     }
   }
 
   // First move must cover center
   if (isBoardEmpty(board)) {
-    const coversCenter = placements.some(p => p.row === CENTER && p.col === CENTER);
+    const coversCenter = placements.some(
+      (p) => p.row === CENTER && p.col === CENTER,
+    );
     if (!coversCenter) {
-      return { valid: false, error: 'First word must cover the center square' };
+      return { valid: false, error: "First word must cover the center square" };
     }
   } else {
     // Subsequent moves must connect to existing tiles
-    const connectsToExisting = placements.some(p => {
+    const connectsToExisting = placements.some((p) => {
       const neighbors = [
-        [p.row - 1, p.col], [p.row + 1, p.col],
-        [p.row, p.col - 1], [p.row, p.col + 1],
+        [p.row - 1, p.col],
+        [p.row + 1, p.col],
+        [p.row, p.col - 1],
+        [p.row, p.col + 1],
       ];
-      return neighbors.some(([r, c]) =>
-        r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE &&
-        board[r][c].akshara !== null
+      return neighbors.some(
+        ([r, c]) =>
+          r >= 0 &&
+          r < BOARD_SIZE &&
+          c >= 0 &&
+          c < BOARD_SIZE &&
+          board[r][c].akshara !== null,
       );
     });
     if (!connectsToExisting) {
-      return { valid: false, error: 'Word must connect to existing tiles' };
+      return { valid: false, error: "Word must connect to existing tiles" };
     }
   }
 
@@ -203,8 +252,12 @@ export function validatePlacement(
 /**
  * Apply placements to board (mutates a copy).
  */
-export function applyPlacements(board: BoardState, placements: TilePlacement[], turn: number): BoardState {
-  const newBoard = board.map(row => row.map(cell => ({ ...cell })));
+export function applyPlacements(
+  board: BoardState,
+  placements: TilePlacement[],
+  turn: number,
+): BoardState {
+  const newBoard = board.map((row) => row.map((cell) => ({ ...cell })));
   for (const p of placements) {
     newBoard[p.row][p.col].akshara = normalizeText(p.akshara);
     newBoard[p.row][p.col].turnPlaced = turn;
@@ -218,23 +271,28 @@ export function applyPlacements(board: BoardState, placements: TilePlacement[], 
  */
 export function extractWords(
   board: BoardState,
-  placements: TilePlacement[]
+  placements: TilePlacement[],
 ): { word: string; cells: Cell[] }[] {
   // Create a temporary board with placements applied
   const tempBoard = applyPlacements(board, placements, -1);
   const words: { word: string; cells: Cell[] }[] = [];
 
   // Determine direction
-  const allSameRow = placements.every(p => p.row === placements[0].row);
+  const allSameRow = placements.every((p) => p.row === placements[0].row);
 
   // Extract main word
-  const mainWord = extractWordAt(tempBoard, placements[0].row, placements[0].col, allSameRow ? 'horizontal' : 'vertical');
+  const mainWord = extractWordAt(
+    tempBoard,
+    placements[0].row,
+    placements[0].col,
+    allSameRow ? "horizontal" : "vertical",
+  );
   if (mainWord.cells.length > 1) {
     words.push(mainWord);
   }
 
   // Extract cross words for each placed tile
-  const crossDir = allSameRow ? 'vertical' : 'horizontal';
+  const crossDir = allSameRow ? "vertical" : "horizontal";
   for (const p of placements) {
     const crossWord = extractWordAt(tempBoard, p.row, p.col, crossDir);
     if (crossWord.cells.length > 1) {
@@ -255,11 +313,11 @@ function extractWordAt(
   board: BoardState,
   row: number,
   col: number,
-  direction: 'horizontal' | 'vertical'
+  direction: "horizontal" | "vertical",
 ): { word: string; cells: Cell[] } {
   const cells: Cell[] = [];
 
-  if (direction === 'horizontal') {
+  if (direction === "horizontal") {
     // Find start
     let c = col;
     while (c > 0 && board[row][c - 1].akshara !== null) c--;
@@ -277,7 +335,7 @@ function extractWordAt(
     }
   }
 
-  const word = cells.map(c => c.akshara!).join('');
+  const word = cells.map((c) => c.akshara!).join("");
   return { word, cells };
 }
 

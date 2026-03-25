@@ -1,8 +1,8 @@
-import { Router, Request, Response } from 'express';
-import { z } from 'zod';
-import { AuthService } from './auth.service';
-import { authMiddleware } from '../../middleware/auth.middleware';
-import { UserModel } from './auth.model';
+import { Request, Response, Router } from "express";
+import { z } from "zod";
+import { authMiddleware } from "../../middleware/auth.middleware";
+import { UserModel } from "./auth.model";
+import { AuthService } from "./auth.service";
 
 const router = Router();
 
@@ -11,7 +11,7 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
   displayName: z.string().min(1).max(50),
-  country: z.string().length(2).default('IN'),
+  country: z.string().length(2).default("IN"),
 });
 
 const loginSchema = z.object({
@@ -19,17 +19,21 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-router.post('/register', async (req: Request, res: Response) => {
+router.post("/register", async (req: Request, res: Response) => {
   try {
     const data = registerSchema.parse(req.body);
     const { user, tokens } = await AuthService.register(
-      data.username, data.email, data.password, data.displayName, data.country
+      data.username,
+      data.email,
+      data.password,
+      data.displayName,
+      data.country,
     );
 
-    res.cookie('refreshToken', tokens.refreshToken, {
+    res.cookie("refreshToken", tokens.refreshToken, {
       httpOnly: true,
       secure: false,
-      sameSite: 'lax',
+      sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -45,22 +49,27 @@ router.post('/register', async (req: Request, res: Response) => {
       accessToken: tokens.accessToken,
     });
   } catch (err: any) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    if (err.name === "ZodError") {
+      return res
+        .status(400)
+        .json({ error: "Validation error", details: err.errors });
     }
     return res.status(400).json({ error: err.message });
   }
 });
 
-router.post('/login', async (req: Request, res: Response) => {
+router.post("/login", async (req: Request, res: Response) => {
   try {
     const data = loginSchema.parse(req.body);
-    const { user, tokens } = await AuthService.login(data.emailOrUsername, data.password);
+    const { user, tokens } = await AuthService.login(
+      data.emailOrUsername,
+      data.password,
+    );
 
-    res.cookie('refreshToken', tokens.refreshToken, {
+    res.cookie("refreshToken", tokens.refreshToken, {
       httpOnly: true,
       secure: false,
-      sameSite: 'lax',
+      sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -79,26 +88,28 @@ router.post('/login', async (req: Request, res: Response) => {
       accessToken: tokens.accessToken,
     });
   } catch (err: any) {
-    if (err.name === 'ZodError') {
-      return res.status(400).json({ error: 'Validation error', details: err.errors });
+    if (err.name === "ZodError") {
+      return res
+        .status(400)
+        .json({ error: "Validation error", details: err.errors });
     }
     return res.status(401).json({ error: err.message });
   }
 });
 
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post("/refresh", async (req: Request, res: Response) => {
   try {
     const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
     if (!refreshToken) {
-      return res.status(401).json({ error: 'No refresh token' });
+      return res.status(401).json({ error: "No refresh token" });
     }
 
     const tokens = await AuthService.refreshAccessToken(refreshToken);
 
-    res.cookie('refreshToken', tokens.refreshToken, {
+    res.cookie("refreshToken", tokens.refreshToken, {
       httpOnly: true,
       secure: false,
-      sameSite: 'lax',
+      sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -108,12 +119,12 @@ router.post('/refresh', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/me', authMiddleware, async (req: Request, res: Response) => {
+router.get("/me", authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: "User not found" });
     }
     return res.json({
       user: {
@@ -133,14 +144,14 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/logout', async (req: Request, res: Response) => {
+router.post("/logout", async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId;
     if (userId) {
       await AuthService.logout(userId);
     }
-    res.clearCookie('refreshToken');
-    return res.json({ message: 'Logged out' });
+    res.clearCookie("refreshToken");
+    return res.json({ message: "Logged out" });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

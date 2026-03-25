@@ -1,4 +1,4 @@
-import { UserModel, IUser } from '../auth/auth.model';
+import { IUser, UserModel } from "../auth/auth.model";
 
 const K_FACTOR = 32;
 
@@ -16,13 +16,13 @@ function expectedScore(ratingA: number, ratingB: number): number {
 export async function updateElo(
   winnerId: string,
   loserId: string,
-  isDraw: boolean = false
+  isDraw: boolean = false,
 ): Promise<{ winnerChange: number; loserChange: number }> {
   const winner = await UserModel.findById(winnerId);
   const loser = await UserModel.findById(loserId);
 
   if (!winner || !loser) {
-    throw new Error('Player not found');
+    throw new Error("Player not found");
   }
 
   const expectedWinner = expectedScore(winner.elo, loser.elo);
@@ -48,30 +48,30 @@ export async function updateElo(
 
 export async function getGlobalLeaderboard(
   limit: number = 50,
-  offset: number = 0
+  offset: number = 0,
 ): Promise<IUser[]> {
   return UserModel.find()
     .sort({ elo: -1 })
     .skip(offset)
     .limit(limit)
-    .select('username displayName elo gamesPlayed gamesWon avatar country');
+    .select("username displayName elo gamesPlayed gamesWon avatar country");
 }
 
 export async function getCountryLeaderboard(
   country: string,
   limit: number = 50,
-  offset: number = 0
+  offset: number = 0,
 ): Promise<IUser[]> {
   return UserModel.find({ country })
     .sort({ elo: -1 })
     .skip(offset)
     .limit(limit)
-    .select('username displayName elo gamesPlayed gamesWon avatar country');
+    .select("username displayName elo gamesPlayed gamesWon avatar country");
 }
 
 export async function getPlayerRank(userId: string): Promise<number> {
   const user = await UserModel.findById(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
 
   const rank = await UserModel.countDocuments({ elo: { $gt: user.elo } });
   return rank + 1;

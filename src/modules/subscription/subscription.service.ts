@@ -1,12 +1,14 @@
-import Stripe from 'stripe';
-import { ENV } from '../../config/env';
-import { UserModel } from '../auth/auth.model';
+import Stripe from "stripe";
+import { ENV } from "../../config/env";
+import { UserModel } from "../auth/auth.model";
 
-const stripe = new Stripe(ENV.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' as any });
+const stripe = new Stripe(ENV.STRIPE_SECRET_KEY, {
+  apiVersion: "2024-12-18.acacia" as any,
+});
 
 export const PLANS = {
   free: {
-    name: 'Free',
+    name: "Free",
     multiplayerGamesPerDay: 3,
     aiMaxLevel: 1,
     ranked: false,
@@ -15,8 +17,8 @@ export const PLANS = {
     analytics: false,
   },
   pro: {
-    name: 'Pro',
-    priceId: 'price_pro_monthly',
+    name: "Pro",
+    priceId: "price_pro_monthly",
     multiplayerGamesPerDay: Infinity,
     aiMaxLevel: 3,
     ranked: true,
@@ -25,8 +27,8 @@ export const PLANS = {
     analytics: false,
   },
   guru: {
-    name: 'Guru',
-    priceId: 'price_guru_monthly',
+    name: "Guru",
+    priceId: "price_guru_monthly",
     multiplayerGamesPerDay: Infinity,
     aiMaxLevel: 3,
     ranked: true,
@@ -40,10 +42,10 @@ export type PlanKey = keyof typeof PLANS;
 
 export async function createCheckoutSession(
   userId: string,
-  plan: 'pro' | 'guru'
+  plan: "pro" | "guru",
 ): Promise<string> {
   const user = await UserModel.findById(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
 
   let customerId = user.stripeCustomerId;
 
@@ -61,29 +63,29 @@ export async function createCheckoutSession(
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
-    payment_method_types: ['card'],
-    mode: 'subscription',
+    payment_method_types: ["card"],
+    mode: "subscription",
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: `${ENV.CORS_ORIGIN}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${ENV.CORS_ORIGIN}/subscription/cancel`,
     metadata: { userId: user._id.toString(), plan },
   });
 
-  return session.url || '';
+  return session.url || "";
 }
 
 export async function handleWebhook(
   payload: Buffer,
-  signature: string
+  signature: string,
 ): Promise<void> {
   const event = stripe.webhooks.constructEvent(
     payload,
     signature,
-    ENV.STRIPE_WEBHOOK_SECRET
+    ENV.STRIPE_WEBHOOK_SECRET,
   );
 
   switch (event.type) {
-    case 'checkout.session.completed': {
+    case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       const userId = session.metadata?.userId;
       const plan = session.metadata?.plan as PlanKey;
@@ -96,24 +98,28 @@ export async function handleWebhook(
       break;
     }
 
-    case 'customer.subscription.deleted': {
+    case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
-      const user = await UserModel.findOne({ stripeSubscriptionId: subscription.id });
+      const user = await UserModel.findOne({
+        stripeSubscriptionId: subscription.id,
+      });
       if (user) {
-        user.subscription = 'free';
+        user.subscription = "free";
         user.stripeSubscriptionId = undefined;
         await user.save();
       }
       break;
     }
 
-    case 'customer.subscription.updated': {
+    case "customer.subscription.updated": {
       const subscription = event.data.object as Stripe.Subscription;
-      const user = await UserModel.findOne({ stripeSubscriptionId: subscription.id });
-      if (user && subscription.status === 'active') {
+      const user = await UserModel.findOne({
+        stripeSubscriptionId: subscription.id,
+      });
+      if (user && subscription.status === "active") {
         // Keep current plan
-      } else if (user && subscription.status !== 'active') {
-        user.subscription = 'free';
+      } else if (user && subscription.status !== "active") {
+        user.subscription = "free";
         await user.save();
       }
       break;
@@ -123,10 +129,10 @@ export async function handleWebhook(
 
 export async function getSubscriptionStatus(userId: string): Promise<{
   plan: PlanKey;
-  features: typeof PLANS[PlanKey];
+  features: (typeof PLANS)[PlanKey];
 }> {
   const user = await UserModel.findById(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
 
   const plan = user.subscription as PlanKey;
   return { plan, features: PLANS[plan] };
@@ -134,7 +140,7 @@ export async function getSubscriptionStatus(userId: string): Promise<{
 
 export async function checkFeatureAccess(
   userId: string,
-  feature: keyof typeof PLANS['free']
+  feature: keyof (typeof PLANS)["free"],
 ): Promise<boolean> {
   const { features } = await getSubscriptionStatus(userId);
   return !!features[feature];

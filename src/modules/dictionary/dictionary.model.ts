@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Document, Schema } from "mongoose";
 
 export interface IDictionaryEntry extends Document {
   word: string;
@@ -24,14 +24,17 @@ const DictionarySchema = new Schema<IDictionaryEntry>(
     },
     grammar: {
       type: { type: String, required: true },
-      derivation: { type: String, default: '' },
+      derivation: { type: String, default: "" },
     },
     difficulty: { type: Number, required: true, min: 1, max: 5, default: 1 },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 DictionarySchema.index({ difficulty: 1 });
 DictionarySchema.index({ root: 1 });
 
-export const DictionaryModel = mongoose.model<IDictionaryEntry>('Dictionary', DictionarySchema);
+export const DictionaryModel = mongoose.model<IDictionaryEntry>(
+  "Dictionary",
+  DictionarySchema,
+);
