@@ -1,5 +1,5 @@
 import { GameModel, IGame, GameMode, PlayerState, MoveRecord } from './game.model';
-import { SanskritEngine, RACK_SIZE, createTileBag, drawFromBag, constructAkshara, CONSONANTS } from '../../engine/SanskritEngine';
+import { SanskritEngine, RACK_SIZE, createTileBag, drawFromBag } from '../../engine/SanskritEngine';
 import { createBoard, BoardState, TilePlacement, validatePlacement, applyPlacements, extractWords } from '../../engine/Board';
 import { calculateMoveScore } from '../../engine/Scoring';
 import { DictionaryService } from '../dictionary/dictionary.service';
@@ -199,12 +199,18 @@ export async function makeMove(input: MoveInput): Promise<{
     determineWinner(game);
   }
 
-  // Optimistic locking: ensure no concurrent move modified the turn
-  const saved = await GameModel.findOneAndUpdate(
-    { _id: game._id, currentTurn: expectedTurn },
-    game.toObject(),
-    { new: true }
-  );
+  // Optimistic locking with retry: ensure no concurrent move modified the turn
+  let saved = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    saved = await GameModel.findOneAndUpdate(
+      { _id: game._id, currentTurn: expectedTurn },
+      game.toObject(),
+      { new: true }
+    );
+    if (saved) break;
+    // Brief pause before retry
+    if (attempt < 2) await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
+  }
   if (!saved) {
     throw new Error('Move conflict — another move was processed. Please refresh.');
   }
@@ -311,7 +317,7 @@ export async function exchangeTiles(
  */
 export async function previewMove(
   gameId: string,
-  userId: string,
+  _userId: string,
   placements: TilePlacement[]
 ): Promise<{
   valid: boolean;
@@ -332,7 +338,7 @@ export async function previewMove(
   }
 
   // Extract words and check validity
-  const formedWords = extractWords(board, placements);
+  extractWords(board, placements);
   const wordResults: { word: string; score: number; valid: boolean }[] = [];
   let allValid = true;
 

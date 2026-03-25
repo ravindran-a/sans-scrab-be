@@ -20,26 +20,33 @@ interface AuthenticatedSocket extends Socket {
 // --- Turn Timer Manager ---
 const turnTimers = new Map<string, NodeJS.Timeout>();
 const timerIntervals = new Map<string, NodeJS.Timeout>();
+// Cache timer data in memory to avoid DB queries every 5s
+const timerCache = new Map<string, { roomId: string; turnTimer: number; turnStartedAt: number }>();
 
 function startTurnTimer(io: Server, gameId: string, turnTimer: number, turnStartedAt: Date) {
   clearTurnTimer(gameId);
 
-  const elapsed = Math.floor((Date.now() - new Date(turnStartedAt).getTime()) / 1000);
+  const startTime = new Date(turnStartedAt).getTime();
+  const elapsed = Math.floor((Date.now() - startTime) / 1000);
   const remaining = Math.max(0, turnTimer - elapsed);
 
-  // Broadcast remaining time every second
-  const interval = setInterval(async () => {
-    const now = Date.now();
-    const game = await GameModel.findById(gameId).select('roomId turnStartedAt turnTimer status');
-    if (!game || game.status !== 'active') {
+  // Cache the timer data — no need to query DB every 5s for static values
+  // We need the roomId, fetch it once
+  GameModel.findById(gameId).select('roomId').then(game => {
+    if (!game?.roomId) return;
+    timerCache.set(gameId, { roomId: game.roomId, turnTimer, turnStartedAt: startTime });
+  });
+
+  // Broadcast remaining time every 5s using cached data
+  const interval = setInterval(() => {
+    const cached = timerCache.get(gameId);
+    if (!cached) {
       clearTurnTimer(gameId);
       return;
     }
-    const timeLeft = Math.max(0, game.turnTimer - Math.floor((now - new Date(game.turnStartedAt!).getTime()) / 1000));
-    if (game.roomId) {
-      io.to(game.roomId).emit(SOCKET_EVENTS.GAME_TIMER, { gameId, timeLeft });
-    }
-  }, 5000); // every 5s to reduce load
+    const timeLeft = Math.max(0, cached.turnTimer - Math.floor((Date.now() - cached.turnStartedAt) / 1000));
+    io.to(cached.roomId).emit(SOCKET_EVENTS.GAME_TIMER, { gameId, timeLeft });
+  }, 5000);
   timerIntervals.set(gameId, interval);
 
   // Auto-pass when time runs out
@@ -80,6 +87,7 @@ function clearTurnTimer(gameId: string) {
   if (timeout) { clearTimeout(timeout); turnTimers.delete(gameId); }
   const interval = timerIntervals.get(gameId);
   if (interval) { clearInterval(interval); timerIntervals.delete(gameId); }
+  timerCache.delete(gameId);
 }
 
 // --- Socket Rate Limiter ---

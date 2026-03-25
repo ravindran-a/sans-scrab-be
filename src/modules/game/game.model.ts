@@ -1,5 +1,4 @@
 import mongoose, { Schema, Document } from 'mongoose';
-import { BoardState } from '../../engine/Board';
 
 export type GameMode = 'single' | 'ai' | 'multiplayer';
 export type GameStatus = 'waiting' | 'active' | 'finished' | 'abandoned';

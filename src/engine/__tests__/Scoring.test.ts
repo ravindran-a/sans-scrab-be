@@ -1,5 +1,5 @@
 import { getAksharaScore, calculateMoveScore } from '../Scoring';
-import { createBoard, applyPlacements } from '../Board';
+import { createBoard } from '../Board';
 
 describe('Scoring', () => {
   describe('getAksharaScore', () => {

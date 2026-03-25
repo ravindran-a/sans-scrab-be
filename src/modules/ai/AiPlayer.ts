@@ -1,7 +1,6 @@
 import { BoardState, BOARD_SIZE, TilePlacement, validatePlacement, extractWords } from '../../engine/Board';
 import { calculateMoveScore } from '../../engine/Scoring';
 import { splitAksharas, normalizeText } from '../../engine/GraphemeSplitter';
-import { constructAkshara, VOWELS, VOWEL_SIGNS, VIRAMA } from '../../engine/SanskritEngine';
 import { DictionaryService } from '../dictionary/dictionary.service';
 
 export interface AiMove {
@@ -99,7 +98,7 @@ export class AiPlayer {
    * Position evaluation heuristic.
    * Considers: score, center proximity, premium square control, board openness.
    */
-  private evaluatePosition(move: AiMove, board: BoardState): number {
+  private evaluatePosition(move: AiMove, _board: BoardState): number {
     let eval_ = move.score;
 
     const center = Math.floor(BOARD_SIZE / 2);

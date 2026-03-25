@@ -1,4 +1,4 @@
-import { SanskritEngine, constructAkshara, createTileBag, drawFromBag, validateRackUsage, CONSONANTS, RACK_SIZE } from '../SanskritEngine';
+import { constructAkshara, createTileBag, drawFromBag, validateRackUsage, CONSONANTS, RACK_SIZE } from '../SanskritEngine';
 
 describe('SanskritEngine', () => {
   describe('constructAkshara', () => {
@@ -41,9 +41,7 @@ describe('SanskritEngine', () => {
     it('should be shuffled (not always same order)', () => {
       const bag1 = createTileBag();
       const bag2 = createTileBag();
-      // Very unlikely to be identical
-      const same = bag1.every((c, i) => c === bag2[i]);
-      // This could theoretically fail, but probability is negligible
+      // Both bags should have the same length
       expect(bag1.length).toBe(bag2.length);
     });
   });

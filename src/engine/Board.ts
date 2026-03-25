@@ -1,4 +1,4 @@
-import { splitAksharas, isValidAkshara, normalizeText } from './GraphemeSplitter';
+import { isValidAkshara, normalizeText } from './GraphemeSplitter';
 
 export const BOARD_SIZE = 11;
 export const CENTER = Math.floor(BOARD_SIZE / 2); // 5
@@ -223,7 +223,6 @@ export function extractWords(
   // Create a temporary board with placements applied
   const tempBoard = applyPlacements(board, placements, -1);
   const words: { word: string; cells: Cell[] }[] = [];
-  const placementSet = new Set(placements.map(p => `${p.row},${p.col}`));
 
   // Determine direction
   const allSameRow = placements.every(p => p.row === placements[0].row);

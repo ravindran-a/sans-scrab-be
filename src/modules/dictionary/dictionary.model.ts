@@ -31,7 +31,6 @@ const DictionarySchema = new Schema<IDictionaryEntry>(
   { timestamps: true }
 );
 
-DictionarySchema.index({ word: 1 });
 DictionarySchema.index({ difficulty: 1 });
 DictionarySchema.index({ root: 1 });
 

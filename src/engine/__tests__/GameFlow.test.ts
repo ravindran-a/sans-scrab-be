@@ -3,10 +3,10 @@
  * Tests solo mode, AI mode, multiplayer mode logic, scoring, pass mechanics, game end conditions.
  */
 import { createBoard, validatePlacement, applyPlacements, extractWords, BOARD_SIZE, CENTER, BoardState, TilePlacement, isBoardEmpty } from '../Board';
-import { calculateMoveScore, getAksharaScore, scoreWord } from '../Scoring';
+import { calculateMoveScore, getAksharaScore } from '../Scoring';
 import { createTileBag, drawFromBag, RACK_SIZE, constructAkshara, CONSONANTS, VOWELS, shuffleArray, VIRAMA } from '../SanskritEngine';
 import { splitAksharas, normalizeText, isValidAkshara } from '../GraphemeSplitter';
-import { AiPlayer, AiMove } from '../../modules/ai/AiPlayer';
+import { AiPlayer } from '../../modules/ai/AiPlayer';
 
 // ─── Game simulation helpers ───
 
@@ -351,7 +351,6 @@ describe('Full Game Flow', () => {
 
     it('should allow tile exchange', () => {
       const game = createGameState('single');
-      const rackBefore = [...game.players[0].rack];
       const bagSizeBefore = game.tileBag.length;
 
       exchangeTiles(game, 'player1', [0, 1, 2]);
@@ -660,7 +659,6 @@ describe('Full Game Flow', () => {
       passTurn(game, 'player1');
 
       // AI exchanges
-      const aiRackBefore = [...game.players[1].rack];
       const result = exchangeTiles(game, 'ai', [0, 1]);
 
       expect(result.error).toBeUndefined();
@@ -1507,6 +1505,221 @@ describe('Full Game Flow', () => {
       for (const [r, c] of twPositions) {
         expect(board[r][c].type).toBe('triple_word');
       }
+    });
+  });
+
+  // ─── Last Move Highlighting (turnPlaced tracking) ───
+
+  describe('Last Move Highlighting — turnPlaced tracking', () => {
+    it('should set turnPlaced on cells after first move', () => {
+      const game = createGameState('single');
+      const rack = game.players[0].rack;
+      const a1 = constructAkshara([rack[0]], 'अ');
+      const a2 = constructAkshara([rack[1]], 'अ');
+
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+        { row: CENTER, col: CENTER + 1, akshara: a2 },
+      ], [0, 1]);
+
+      // Move index 0 → turnPlaced should be 0
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBe(0);
+    });
+
+    it('should set different turnPlaced for each subsequent move', () => {
+      const game = createGameState('single');
+      const rack = game.players[0].rack;
+
+      // Move 0
+      const a1 = constructAkshara([rack[0]], 'अ');
+      const a2 = constructAkshara([rack[1]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+        { row: CENTER, col: CENTER + 1, akshara: a2 },
+      ], [0, 1]);
+
+      // Move 1
+      const newRack = game.players[0].rack;
+      const a3 = constructAkshara([newRack[0]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER + 2, akshara: a3 },
+      ], [0]);
+
+      // First move tiles have turnPlaced=0
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBe(0);
+      // Second move tile has turnPlaced=1
+      expect(game.board[CENTER][CENTER + 2].turnPlaced).toBe(1);
+    });
+
+    it('should correctly identify last move cells by turnPlaced in AI mode', () => {
+      const game = createGameState('ai', 1);
+      const rack = game.players[0].rack;
+
+      // Player move (turn 0 → moves[0])
+      const a1 = constructAkshara([rack[0]], 'अ');
+      const a2 = constructAkshara([rack[1]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+        { row: CENTER, col: CENTER + 1, akshara: a2 },
+      ], [0, 1]);
+
+      // AI move (turn 1 → moves[1])
+      const aiRack = game.players[1].rack;
+      const a3 = constructAkshara([aiRack[0]], 'अ');
+      makeMove(game, 'ai', [
+        { row: CENTER + 1, col: CENTER, akshara: a3 },
+      ], [0]);
+
+      // Last move is AI's (moves[1], turnPlaced=1)
+      const lastMoveIndex = game.moves.length - 1;
+      expect(lastMoveIndex).toBe(1);
+      expect(game.board[CENTER + 1][CENTER].turnPlaced).toBe(1);
+
+      // Player's tiles still have turnPlaced=0
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBe(0);
+
+      // Can filter last move cells by turnPlaced === lastMoveIndex
+      const lastMoveCells: [number, number][] = [];
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          if (game.board[r][c].turnPlaced === lastMoveIndex) {
+            lastMoveCells.push([r, c]);
+          }
+        }
+      }
+      expect(lastMoveCells).toEqual([[CENTER + 1, CENTER]]);
+    });
+
+    it('should not set turnPlaced on empty cells', () => {
+      const game = createGameState('single');
+      const rack = game.players[0].rack;
+      const a1 = constructAkshara([rack[0]], 'अ');
+
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+      ], [0]);
+
+      // Adjacent empty cells should not have turnPlaced
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBeUndefined();
+      expect(game.board[CENTER - 1][CENTER].turnPlaced).toBeUndefined();
+    });
+
+    it('pass moves should not change any turnPlaced values', () => {
+      const game = createGameState('single');
+      const rack = game.players[0].rack;
+
+      // Place a tile
+      const a1 = constructAkshara([rack[0]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+      ], [0]);
+
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+
+      // Pass turn — should not change any turnPlaced
+      passTurn(game, 'player1');
+
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      // No cells should have turnPlaced=1 (the pass)
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          if (game.board[r][c].turnPlaced !== undefined) {
+            expect(game.board[r][c].turnPlaced).toBe(0);
+          }
+        }
+      }
+    });
+
+    it('last move info should match moves array data', () => {
+      const game = createGameState('ai', 1);
+      const rack = game.players[0].rack;
+
+      // Player move
+      const a1 = constructAkshara([rack[0]], 'अ');
+      const a2 = constructAkshara([rack[1]], 'अ');
+      const result = makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+        { row: CENTER, col: CENTER + 1, akshara: a2 },
+      ], [0, 1]);
+
+      // moves[0] should contain the score and words
+      const lastMove = game.moves[game.moves.length - 1];
+      expect(lastMove.playerId).toBe('player1');
+      expect(lastMove.score).toBe(result.moveScore);
+      expect(lastMove.placements.length).toBe(2);
+      expect(lastMove.wordsFormed.length).toBeGreaterThan(0);
+
+      // turnPlaced on board matches the move index
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBe(0);
+    });
+
+    it('should find last placing move even after passes in multiplayer', () => {
+      const game = createGameState('multiplayer');
+      const p1Rack = game.players[0].rack;
+
+      // Player 1 moves (moves[0])
+      const a1 = constructAkshara([p1Rack[0]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+      ], [0]);
+
+      // Player 2 passes (moves[1])
+      passTurn(game, 'player2');
+
+      // The last tile-placing move is still moves[0]
+      let lastPlacingMoveIndex = -1;
+      for (let i = game.moves.length - 1; i >= 0; i--) {
+        if (game.moves[i].placements.length > 0) {
+          lastPlacingMoveIndex = i;
+          break;
+        }
+      }
+      expect(lastPlacingMoveIndex).toBe(0);
+
+      // And turnPlaced matches
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+    });
+
+    it('should track turnPlaced across multiple moves in multiplayer', () => {
+      const game = createGameState('multiplayer');
+      const p1Rack = game.players[0].rack;
+
+      // Player 1 move (moves[0])
+      const a1 = constructAkshara([p1Rack[0]], 'अ');
+      const a2 = constructAkshara([p1Rack[1]], 'अ');
+      makeMove(game, 'player1', [
+        { row: CENTER, col: CENTER, akshara: a1 },
+        { row: CENTER, col: CENTER + 1, akshara: a2 },
+      ], [0, 1]);
+
+      // Player 2 move (moves[1])
+      const p2Rack = game.players[1].rack;
+      const a3 = constructAkshara([p2Rack[0]], 'अ');
+      makeMove(game, 'player2', [
+        { row: CENTER - 1, col: CENTER, akshara: a3 },
+      ], [0]);
+
+      // Player 1's tiles: turnPlaced=0
+      expect(game.board[CENTER][CENTER].turnPlaced).toBe(0);
+      expect(game.board[CENTER][CENTER + 1].turnPlaced).toBe(0);
+      // Player 2's tile: turnPlaced=1
+      expect(game.board[CENTER - 1][CENTER].turnPlaced).toBe(1);
+
+      // Last move is player 2's
+      const lastMoveIndex = game.moves.length - 1;
+      const lastMoveCells: [number, number][] = [];
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        for (let c = 0; c < BOARD_SIZE; c++) {
+          if (game.board[r][c].turnPlaced === lastMoveIndex) {
+            lastMoveCells.push([r, c]);
+          }
+        }
+      }
+      expect(lastMoveCells).toEqual([[CENTER - 1, CENTER]]);
     });
   });
 });

@@ -44,7 +44,7 @@ async function createRoom(
   };
 
   if (redis) {
-    await redis.set(`${ROOM_PREFIX}${id}`, JSON.stringify(room), { EX: 3600 });
+    await redis.set(`${ROOM_PREFIX}${id}`, JSON.stringify(room), { EX: 7200 });
     if (!isPrivate) {
       await redis.sAdd(ROOM_LIST_KEY, id);
     }
@@ -98,7 +98,8 @@ async function leaveRoom(roomId: string, userId: string): Promise<RoomInfo | nul
 async function updateRoom(room: RoomInfo): Promise<void> {
   const redis = getRedisClient();
   if (redis) {
-    await redis.set(`${ROOM_PREFIX}${room.id}`, JSON.stringify(room), { EX: 3600 });
+    // Reset TTL to 2 hours on every update (covers rematch, game start, etc.)
+    await redis.set(`${ROOM_PREFIX}${room.id}`, JSON.stringify(room), { EX: 7200 });
   } else {
     memoryRooms.set(room.id, room);
   }

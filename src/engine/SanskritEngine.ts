@@ -1,6 +1,6 @@
-import { GraphemeSplitter, splitAksharas, isValidAkshara, normalizeText, countAksharas } from './GraphemeSplitter';
-import { Board, BoardState, TilePlacement, createBoard, validatePlacement, applyPlacements, extractWords, BOARD_SIZE, CENTER } from './Board';
-import { Scoring, calculateMoveScore, getAksharaScore } from './Scoring';
+import { splitAksharas, isValidAkshara, normalizeText, countAksharas } from './GraphemeSplitter';
+import { createBoard, validatePlacement, applyPlacements, extractWords, BOARD_SIZE, CENTER } from './Board';
+import { calculateMoveScore, getAksharaScore } from './Scoring';
 
 /**
  * All Sanskrit consonants (vyañjana) used in the game.

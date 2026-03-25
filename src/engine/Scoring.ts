@@ -1,5 +1,5 @@
-import { BoardState, Cell, TilePlacement, extractWords, applyPlacements, BOARD_SIZE } from './Board';
-import { splitAksharas, normalizeText } from './GraphemeSplitter';
+import { BoardState, Cell, TilePlacement, extractWords, applyPlacements } from './Board';
+import { normalizeText } from './GraphemeSplitter';
 
 /**
  * Consonant scores based on frequency in Sanskrit.
