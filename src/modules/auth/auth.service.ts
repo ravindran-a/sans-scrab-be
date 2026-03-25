@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import { UserModel, IUser } from './auth.model';
 import { ENV } from '../../config/env';
 
-const ACCESS_TOKEN_EXPIRY = '15m';
+const ACCESS_TOKEN_EXPIRY = '2h';
 const REFRESH_TOKEN_EXPIRY = '7d';
 
 export interface TokenPair {
