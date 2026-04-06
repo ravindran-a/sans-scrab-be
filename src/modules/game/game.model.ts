@@ -33,6 +33,7 @@ export interface IGame extends Document {
   roomId?: string;
   winner?: string;
   eloChange?: { [userId: string]: number };
+  isGuest?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,6 +77,7 @@ const GameSchema = new Schema<IGame>(
     roomId: { type: String, index: true },
     winner: { type: String },
     eloChange: { type: Schema.Types.Mixed },
+    isGuest: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

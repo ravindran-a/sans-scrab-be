@@ -9,6 +9,13 @@ router.post("/create", authMiddleware, async (req: Request, res: Response) => {
     const { mode, aiDifficulty, turnTimer } = req.body;
     const userId = (req as any).userId;
     const username = (req as any).username;
+    const isGuest = (req as any).isGuest;
+
+    if (isGuest && mode === "multiplayer") {
+      return res
+        .status(403)
+        .json({ error: "Guests cannot play multiplayer. Please create an account." });
+    }
 
     const game = await GameService.createGame({
       mode,
@@ -16,6 +23,7 @@ router.post("/create", authMiddleware, async (req: Request, res: Response) => {
       username,
       aiDifficulty,
       turnTimer,
+      isGuest,
     });
 
     return res.status(201).json({ game: sanitizeGameForPlayer(game, userId) });
@@ -99,6 +107,9 @@ router.get(
   authMiddleware,
   async (req: Request, res: Response) => {
     try {
+      if ((req as any).isGuest) {
+        return res.status(403).json({ error: "Guests cannot access game history" });
+      }
       const userId = (req as any).userId;
       const games = await GameService.getGamesByUser(userId);
       return res.json({

@@ -19,6 +19,26 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+router.post("/guest", async (_req: Request, res: Response) => {
+  try {
+    const accessToken = AuthService.generateGuestToken();
+    const decoded = AuthService.verifyAccessToken(accessToken);
+    return res.json({
+      user: {
+        id: decoded.userId,
+        username: decoded.username,
+        displayName: "अतिथि",
+        elo: 1200,
+        subscription: "free",
+        isGuest: true,
+      },
+      accessToken,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/register", async (req: Request, res: Response) => {
   try {
     const data = registerSchema.parse(req.body);

@@ -19,6 +19,7 @@ export function authMiddleware(
     (req as any).userId = decoded.userId;
     (req as any).username = decoded.username;
     (req as any).subscription = decoded.subscription;
+    (req as any).isGuest = decoded.isGuest || false;
     next();
   } catch {
     res.status(401).json({ error: "Invalid or expired token" });

@@ -14,7 +14,10 @@ export interface JwtPayload {
   userId: string;
   username: string;
   subscription: string;
+  isGuest?: boolean;
 }
+
+const GUEST_TOKEN_EXPIRY = "2h";
 
 function generateTokens(user: IUser): TokenPair {
   const payload: JwtPayload = {
@@ -120,6 +123,17 @@ export function verifyAccessToken(token: string): JwtPayload {
   return jwt.verify(token, ENV.JWT_SECRET) as JwtPayload;
 }
 
+export function generateGuestToken(): string {
+  const guestId = `guest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const payload: JwtPayload = {
+    userId: guestId,
+    username: "अतिथि",
+    subscription: "free",
+    isGuest: true,
+  };
+  return jwt.sign(payload, ENV.JWT_SECRET, { expiresIn: GUEST_TOKEN_EXPIRY });
+}
+
 export const AuthService = {
   register,
   login,
@@ -127,4 +141,5 @@ export const AuthService = {
   logout,
   verifyAccessToken,
   generateTokens,
+  generateGuestToken,
 };

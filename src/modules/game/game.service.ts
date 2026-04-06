@@ -31,6 +31,7 @@ export interface CreateGameOptions {
   aiDifficulty?: number;
   turnTimer?: number;
   roomId?: string;
+  isGuest?: boolean;
 }
 
 export async function createGame(options: CreateGameOptions): Promise<IGame> {
@@ -80,6 +81,7 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
     turnTimer: options.turnTimer || 120,
     turnStartedAt: new Date(),
     roomId: options.roomId,
+    isGuest: options.isGuest || false,
   });
 
   return game;
