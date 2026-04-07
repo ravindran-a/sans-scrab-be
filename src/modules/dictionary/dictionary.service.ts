@@ -1,4 +1,8 @@
-import { normalizeText } from "../../engine/GraphemeSplitter";
+import { normalizeText, splitAksharas } from "../../engine/GraphemeSplitter";
+import {
+  buildAksharaDistribution,
+  buildSortedWordAksharas,
+} from "../../engine/SanskritEngine";
 import { DictionaryModel, IDictionaryEntry } from "./dictionary.model";
 
 /**
@@ -9,6 +13,12 @@ let wordSet: Set<string> = new Set();
 let wordList: string[] = [];
 let wordMap: Map<string, IDictionaryEntry> = new Map();
 const difficultyCache: Map<number, string[]> = new Map();
+
+/**
+ * Word → akshara[] index for akshara mode AI and formability checks.
+ * Maps normalized word to its akshara breakdown.
+ */
+let wordAksharaIndex: Map<string, string[][]> = new Map();
 
 export async function loadDictionary(): Promise<void> {
   const entries = await DictionaryModel.find({}).lean<IDictionaryEntry[]>();
@@ -35,7 +45,26 @@ export async function loadDictionary(): Promise<void> {
     );
   }
 
+  // Build word → aksharas index for akshara mode
+  wordAksharaIndex = new Map();
+  for (const word of wordList) {
+    const aksharas = splitAksharas(word);
+    if (aksharas.length >= 2) {
+      if (!wordAksharaIndex.has(word)) {
+        wordAksharaIndex.set(word, []);
+      }
+      wordAksharaIndex.get(word)!.push(aksharas);
+    }
+  }
+
+  // Build akshara frequency distribution for tile bag generation
+  buildAksharaDistribution(wordList);
+  buildSortedWordAksharas(wordAksharaIndex);
+
   console.log(`[Dictionary] Loaded ${wordSet.size} words into memory`);
+  console.log(
+    `[Dictionary] Akshara index: ${wordAksharaIndex.size} words with 2+ aksharas`,
+  );
 }
 
 export function isValidWord(word: string): boolean {
@@ -85,6 +114,10 @@ export function getRandomWord(maxDifficulty: number = 5): string | null {
   return filtered[Math.floor(Math.random() * filtered.length)];
 }
 
+export function getWordAksharaIndex(): Map<string, string[][]> {
+  return wordAksharaIndex;
+}
+
 export const DictionaryService = {
   loadDictionary,
   isValidWord,
@@ -94,4 +127,5 @@ export const DictionaryService = {
   getAllEntries,
   getWordsByDifficulty,
   getRandomWord,
+  getWordAksharaIndex,
 };

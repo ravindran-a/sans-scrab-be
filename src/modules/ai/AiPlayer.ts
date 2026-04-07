@@ -7,6 +7,7 @@ import {
 } from "../../engine/Board";
 import { normalizeText, splitAksharas } from "../../engine/GraphemeSplitter";
 import { calculateMoveScore } from "../../engine/Scoring";
+import { AKSHARA_RACK_SIZE, RACK_SIZE } from "../../engine/SanskritEngine";
 import { DictionaryService } from "../dictionary/dictionary.service";
 
 export interface AiMove {
@@ -25,9 +26,11 @@ export interface AiMove {
  */
 export class AiPlayer {
   private difficulty: number;
+  private aksharaMode: boolean;
 
-  constructor(difficulty: number = 1) {
+  constructor(difficulty: number = 1, aksharaMode: boolean = false) {
     this.difficulty = Math.min(Math.max(difficulty, 1), 3);
+    this.aksharaMode = aksharaMode;
   }
 
   async findMove(board: BoardState, rack: string[]): Promise<AiMove | null> {
@@ -165,6 +168,7 @@ export class AiPlayer {
         const { totalScore, wordScores } = calculateMoveScore(
           board,
           placements,
+          this.aksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE,
         );
 
         moves.push({
@@ -180,7 +184,9 @@ export class AiPlayer {
   }
 
   /**
-   * Check if the given aksharas can be formed from the rack (consonants) + free vowels.
+   * Check if the given aksharas can be formed from the rack.
+   * Classic mode: matches consonants (vowels are free).
+   * Akshara mode: matches whole aksharas directly.
    * Returns rack indices used, or null if not possible.
    */
   private canFormWord(
@@ -194,24 +200,35 @@ export class AiPlayer {
     }));
     const usedIndices: number[] = [];
 
-    for (const akshara of aksharas) {
-      // Extract consonants from this akṣara
-      const consonantsNeeded: string[] = [];
-      for (const ch of Array.from(akshara.normalize("NFC"))) {
-        const code = ch.charCodeAt(0);
-        if (code >= 0x0915 && code <= 0x0939) {
-          consonantsNeeded.push(ch);
-        }
-      }
-
-      // Try to find each consonant in the rack
-      for (const consonant of consonantsNeeded) {
+    if (this.aksharaMode) {
+      // Akshara mode: each word akshara must match a rack tile exactly
+      for (const akshara of aksharas) {
         const found = availableRack.find(
-          (r) => r.char === consonant && !r.used,
+          (r) => r.char === akshara && !r.used,
         );
         if (!found) return null;
         found.used = true;
         usedIndices.push(found.index);
+      }
+    } else {
+      // Classic mode: extract consonants from aksharas and match against rack
+      for (const akshara of aksharas) {
+        const consonantsNeeded: string[] = [];
+        for (const ch of Array.from(akshara.normalize("NFC"))) {
+          const code = ch.charCodeAt(0);
+          if (code >= 0x0915 && code <= 0x0939) {
+            consonantsNeeded.push(ch);
+          }
+        }
+
+        for (const consonant of consonantsNeeded) {
+          const found = availableRack.find(
+            (r) => r.char === consonant && !r.used,
+          );
+          if (!found) return null;
+          found.used = true;
+          usedIndices.push(found.index);
+        }
       }
     }
 

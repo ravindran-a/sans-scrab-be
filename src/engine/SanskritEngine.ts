@@ -94,6 +94,7 @@ export const ANUSVARA = "\u0902";
 export const VISARGA = "\u0903";
 
 export const RACK_SIZE = 15;
+export const AKSHARA_RACK_SIZE = 8;
 
 /**
  * Consonant distribution in tile bag — weighted by Sanskrit frequency.
@@ -210,6 +211,142 @@ export function constructAkshara(
   return result.normalize("NFC");
 }
 
+// ─── Akshara Mode Tile Bag ──────────────────────────────────────────
+
+/**
+ * Akshara distribution built from dictionary at startup.
+ * Maps each akshara string to its frequency count across all dictionary words.
+ */
+let aksharaDistribution: Map<string, number> = new Map();
+let aksharaTileCounts: Map<string, number> = new Map();
+
+/**
+ * Build akshara frequency distribution from a list of dictionary words.
+ * Call once at server startup after dictionary is loaded.
+ */
+export function buildAksharaDistribution(words: string[]): void {
+  const freq = new Map<string, number>();
+  for (const word of words) {
+    const aksharas = splitAksharas(normalizeText(word));
+    for (const a of aksharas) {
+      freq.set(a, (freq.get(a) || 0) + 1);
+    }
+  }
+  aksharaDistribution = freq;
+
+  // Build tile counts: scale frequencies to a bag of ~200 tiles
+  // Only include aksharas appearing in 3+ words (filter ultra-rare)
+  const TARGET_BAG_SIZE = 200;
+  const filtered = new Map<string, number>();
+  let totalFreq = 0;
+  for (const [a, count] of freq) {
+    if (count >= 3) {
+      filtered.set(a, count);
+      totalFreq += count;
+    }
+  }
+
+  const tileCounts = new Map<string, number>();
+  for (const [a, count] of filtered) {
+    // Scale: at least 1 tile, proportional to frequency
+    const tiles = Math.max(1, Math.round((count / totalFreq) * TARGET_BAG_SIZE));
+    tileCounts.set(a, tiles);
+  }
+  aksharaTileCounts = tileCounts;
+}
+
+/**
+ * Get the akshara distribution (for testing/inspection).
+ */
+export function getAksharaDistribution(): Map<string, number> {
+  return aksharaDistribution;
+}
+
+/**
+ * Get akshara tile counts (for testing/inspection).
+ */
+export function getAksharaTileCounts(): Map<string, number> {
+  return aksharaTileCounts;
+}
+
+/**
+ * Create tile bag for akshara mode — pre-formed akshara tiles.
+ * Must call buildAksharaDistribution() first.
+ */
+export function createAksharaTileBag(): string[] {
+  const bag: string[] = [];
+  for (const [akshara, count] of aksharaTileCounts) {
+    for (let i = 0; i < count; i++) {
+      bag.push(akshara);
+    }
+  }
+  return shuffleArray(bag);
+}
+
+/**
+ * Pre-sorted word-akshara list for fast formability checks.
+ * Sorted by akshara count ascending (short words first).
+ */
+let sortedWordAksharas: string[][] = [];
+
+/**
+ * Build the sorted word-akshara list. Called after dictionary loads.
+ */
+export function buildSortedWordAksharas(
+  wordAksharaIndex: Map<string, string[][]>,
+): void {
+  sortedWordAksharas = [];
+  for (const [, aksharasList] of wordAksharaIndex) {
+    for (const aksharas of aksharasList) {
+      sortedWordAksharas.push(aksharas);
+    }
+  }
+  sortedWordAksharas.sort((a, b) => a.length - b.length);
+}
+
+/**
+ * Check if a rack of aksharas can form at least one valid word.
+ * Uses pre-sorted list so short words (2-akshara) are checked first for early exit.
+ */
+export function canFormAnyWord(
+  rack: string[],
+  wordAksharaIndex: Map<string, string[][]>,
+): boolean {
+  // Use sorted list for performance (short words first)
+  const list =
+    sortedWordAksharas.length > 0 ? sortedWordAksharas : getFallbackList(wordAksharaIndex);
+  for (const wordAksharas of list) {
+    if (wordAksharas.length > rack.length) break; // sorted, so all remaining are longer
+    if (canFormFromRack(wordAksharas, rack)) return true;
+  }
+  return false;
+}
+
+function getFallbackList(
+  wordAksharaIndex: Map<string, string[][]>,
+): string[][] {
+  const result: string[][] = [];
+  for (const [, aksharasList] of wordAksharaIndex) {
+    for (const aksharas of aksharasList) {
+      result.push(aksharas);
+    }
+  }
+  return result.sort((a, b) => a.length - b.length);
+}
+
+/**
+ * Check if specific aksharas can be formed from a rack.
+ */
+function canFormFromRack(needed: string[], rack: string[]): boolean {
+  const available = [...rack];
+  for (const a of needed) {
+    const idx = available.indexOf(a);
+    if (idx === -1) return false;
+    available[idx] = "";
+  }
+  return true;
+}
+
 /**
  * Validate that a rack contains the consonants needed for the placements.
  * Returns which rack indices were used.
@@ -266,6 +403,14 @@ export const SanskritEngine = {
   constructAkshara,
   validateRackUsage,
 
+  // Akshara mode
+  buildAksharaDistribution,
+  buildSortedWordAksharas,
+  getAksharaDistribution,
+  getAksharaTileCounts,
+  createAksharaTileBag,
+  canFormAnyWord,
+
   // Constants
   CONSONANTS,
   VOWELS,
@@ -274,6 +419,7 @@ export const SanskritEngine = {
   ANUSVARA,
   VISARGA,
   RACK_SIZE,
+  AKSHARA_RACK_SIZE,
   BOARD_SIZE,
   CENTER,
 };

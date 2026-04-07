@@ -6,7 +6,7 @@ const router = Router();
 
 router.post("/create", authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { mode, aiDifficulty, turnTimer } = req.body;
+    const { mode, aiDifficulty, turnTimer, gameStyle } = req.body;
     const userId = (req as any).userId;
     const username = (req as any).username;
     const isGuest = (req as any).isGuest;
@@ -24,6 +24,7 @@ router.post("/create", authMiddleware, async (req: Request, res: Response) => {
       aiDifficulty,
       turnTimer,
       isGuest,
+      gameStyle,
     });
 
     return res.status(201).json({ game: sanitizeGameForPlayer(game, userId) });

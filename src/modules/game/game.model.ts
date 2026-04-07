@@ -2,6 +2,7 @@ import mongoose, { Document, Schema } from "mongoose";
 
 export type GameMode = "single" | "ai" | "multiplayer";
 export type GameStatus = "waiting" | "active" | "finished" | "abandoned";
+export type GameStyle = "classic" | "akshara";
 
 export interface PlayerState {
   userId: string;
@@ -22,6 +23,7 @@ export interface MoveRecord {
 export interface IGame extends Document {
   mode: GameMode;
   status: GameStatus;
+  gameStyle: GameStyle;
   board: any;
   players: PlayerState[];
   currentTurn: number;
@@ -49,6 +51,11 @@ const GameSchema = new Schema<IGame>(
       type: String,
       enum: ["waiting", "active", "finished", "abandoned"],
       default: "waiting",
+    },
+    gameStyle: {
+      type: String,
+      enum: ["classic", "akshara"],
+      default: "classic",
     },
     board: { type: Schema.Types.Mixed, required: true },
     players: [

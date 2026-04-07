@@ -8,10 +8,14 @@ import {
 } from "../../engine/Board";
 import { normalizeText } from "../../engine/GraphemeSplitter";
 import {
+  AKSHARA_RACK_SIZE,
   RACK_SIZE,
   SanskritEngine,
+  canFormAnyWord,
+  createAksharaTileBag,
   createTileBag,
   drawFromBag,
+  shuffleArray,
 } from "../../engine/SanskritEngine";
 import { calculateMoveScore } from "../../engine/Scoring";
 import { AiPlayer } from "../ai/AiPlayer";
@@ -19,6 +23,7 @@ import { DictionaryService } from "../dictionary/dictionary.service";
 import {
   GameMode,
   GameModel,
+  GameStyle,
   IGame,
   MoveRecord,
   PlayerState,
@@ -32,14 +37,21 @@ export interface CreateGameOptions {
   turnTimer?: number;
   roomId?: string;
   isGuest?: boolean;
+  gameStyle?: GameStyle;
 }
 
 export async function createGame(options: CreateGameOptions): Promise<IGame> {
   const board = createBoard();
-  const tileBag = createTileBag();
+  const gameStyle = options.gameStyle || "classic";
+  const isAksharaMode = gameStyle === "akshara";
+  const rackSize = isAksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE;
+  const tileBag = isAksharaMode ? createAksharaTileBag() : createTileBag();
 
-  // Draw initial rack for the player
-  const { drawn: rack, remaining } = drawFromBag(tileBag, RACK_SIZE);
+  // Draw initial rack for the player (smart draw for akshara mode)
+  let { drawn: rack, remaining } = drawFromBag(tileBag, rackSize);
+  if (isAksharaMode) {
+    ({ rack, remaining } = smartDraw(rack, remaining, rackSize));
+  }
 
   const players: PlayerState[] = [
     {
@@ -55,10 +67,17 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
 
   // For AI mode, create AI player
   if (options.mode === "ai") {
-    const { drawn: aiRack, remaining: afterAi } = drawFromBag(
+    let { drawn: aiRack, remaining: afterAi } = drawFromBag(
       remaining,
-      RACK_SIZE,
+      rackSize,
     );
+    if (isAksharaMode) {
+      ({ rack: aiRack, remaining: afterAi } = smartDraw(
+        aiRack,
+        afterAi,
+        rackSize,
+      ));
+    }
     players.push({
       userId: "ai",
       username: `AI-Level-${options.aiDifficulty || 1}`,
@@ -72,6 +91,7 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
   const game = await GameModel.create({
     mode: options.mode,
     status: options.mode === "multiplayer" ? "waiting" : "active",
+    gameStyle,
     board,
     players,
     currentTurn: 0,
@@ -87,6 +107,29 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
   return game;
 }
 
+/**
+ * Smart draw for akshara mode: ensure the rack can form at least one word.
+ * Reshuffles up to 3 times before giving up (fallback to best draw).
+ */
+function smartDraw(
+  rack: string[],
+  remaining: string[],
+  rackSize: number,
+): { rack: string[]; remaining: string[] } {
+  const wordIndex = DictionaryService.getWordAksharaIndex();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (canFormAnyWord(rack, wordIndex)) {
+      return { rack, remaining };
+    }
+    // Put rack back, reshuffle, redraw
+    const fullBag = shuffleArray([...rack, ...remaining]);
+    const redraw = drawFromBag(fullBag, rackSize);
+    rack = redraw.drawn;
+    remaining = redraw.remaining;
+  }
+  return { rack, remaining };
+}
+
 export async function joinGame(
   gameId: string,
   userId: string,
@@ -100,7 +143,12 @@ export async function joinGame(
   if (game.players.some((p) => p.userId === userId))
     throw new Error("Already in game");
 
-  const { drawn: rack, remaining } = drawFromBag(game.tileBag, RACK_SIZE);
+  const isAksharaMode = game.gameStyle === "akshara";
+  const rackSize = isAksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE;
+  let { drawn: rack, remaining } = drawFromBag(game.tileBag, rackSize);
+  if (isAksharaMode) {
+    ({ rack, remaining } = smartDraw(rack, remaining, rackSize));
+  }
 
   game.players.push({
     userId,
@@ -143,35 +191,55 @@ export async function makeMove(input: MoveInput): Promise<{
 
   const player = game.players[playerIndex];
   const board = game.board as BoardState;
+  const isAksharaMode = game.gameStyle === "akshara";
+  const rackSize = isAksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE;
 
-  // Anti-cheat: verify rack indices
+  // Anti-cheat: verify rack indices (bounds + no duplicates)
+  const uniqueIndices = new Set(input.rackIndices);
+  if (uniqueIndices.size !== input.rackIndices.length) {
+    throw new Error("Duplicate rack indices");
+  }
   for (const idx of input.rackIndices) {
     if (idx < 0 || idx >= player.rack.length) {
       throw new Error("Invalid rack index");
     }
   }
 
-  // Anti-cheat: verify aksharas can be formed from the rack consonants at given indices
-  const rackConsonants = input.rackIndices.map((idx) => player.rack[idx]);
-  const neededConsonants: string[] = [];
-  for (const placement of input.placements) {
-    const normalized = normalizeText(placement.akshara);
-    for (const ch of Array.from(normalized)) {
-      const code = ch.charCodeAt(0);
-      // Devanagari consonant range: 0x0915 (क) to 0x0939 (ह)
-      if (code >= 0x0915 && code <= 0x0939) {
-        neededConsonants.push(ch);
+  if (isAksharaMode) {
+    // Akshara mode: each placement akshara must exactly match the rack tile at its index
+    const rackAksharas = input.rackIndices.map((idx) => player.rack[idx]);
+    const placedAksharas = input.placements.map((p) =>
+      normalizeText(p.akshara),
+    );
+    const sortedRack = [...rackAksharas].sort();
+    const sortedPlaced = [...placedAksharas].sort();
+    if (
+      sortedRack.length !== sortedPlaced.length ||
+      sortedRack.some((a, i) => a !== sortedPlaced[i])
+    ) {
+      throw new Error("Placed aksharas do not match the rack tiles");
+    }
+  } else {
+    // Classic mode: verify aksharas can be formed from the rack consonants at given indices
+    const rackConsonants = input.rackIndices.map((idx) => player.rack[idx]);
+    const neededConsonants: string[] = [];
+    for (const placement of input.placements) {
+      const normalized = normalizeText(placement.akshara);
+      for (const ch of Array.from(normalized)) {
+        const code = ch.charCodeAt(0);
+        if (code >= 0x0915 && code <= 0x0939) {
+          neededConsonants.push(ch);
+        }
       }
     }
-  }
-  // Sort both arrays and compare — all needed consonants must match rack consonants used
-  const sortedNeeded = [...neededConsonants].sort();
-  const sortedRack = [...rackConsonants].sort();
-  if (
-    sortedNeeded.length !== sortedRack.length ||
-    sortedNeeded.some((c, i) => c !== sortedRack[i])
-  ) {
-    throw new Error("Placed aksharas do not match the rack consonants");
+    const sortedNeeded = [...neededConsonants].sort();
+    const sortedRack = [...rackConsonants].sort();
+    if (
+      sortedNeeded.length !== sortedRack.length ||
+      sortedNeeded.some((c, i) => c !== sortedRack[i])
+    ) {
+      throw new Error("Placed aksharas do not match the rack consonants");
+    }
   }
 
   // Validate placements
@@ -193,22 +261,44 @@ export async function makeMove(input: MoveInput): Promise<{
   const { totalScore, wordScores } = calculateMoveScore(
     board,
     input.placements,
+    rackSize,
   );
 
   // Apply to board
   const newBoard = applyPlacements(board, input.placements, game.moves.length);
 
-  // Remove used consonants from rack and refill
+  // Remove used tiles from rack and refill
   const newRack = [...player.rack];
-  // Sort indices descending to remove from end first
   const sortedIndices = [...input.rackIndices].sort((a, b) => b - a);
   for (const idx of sortedIndices) {
     newRack.splice(idx, 1);
   }
 
-  const needed = RACK_SIZE - newRack.length;
-  const { drawn, remaining } = drawFromBag(game.tileBag, needed);
+  const needed = rackSize - newRack.length;
+  let { drawn, remaining } = drawFromBag(game.tileBag, needed);
   newRack.push(...drawn);
+
+  // Smart draw for akshara mode: if full rack can't form any word,
+  // only re-draw the NEW tiles (preserve tiles the player kept)
+  if (isAksharaMode && remaining.length > 0) {
+    const wordIndex = DictionaryService.getWordAksharaIndex();
+    if (!canFormAnyWord(newRack, wordIndex)) {
+      // Put only the newly drawn tiles back, reshuffle, redraw
+      const keptTiles = newRack.slice(0, newRack.length - drawn.length);
+      let newDrawn = drawn;
+      let bag = remaining;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        bag = shuffleArray([...newDrawn, ...bag]);
+        const redraw = drawFromBag(bag, needed);
+        newDrawn = redraw.drawn;
+        bag = redraw.remaining;
+        if (canFormAnyWord([...keptTiles, ...newDrawn], wordIndex)) break;
+      }
+      newRack.length = 0;
+      newRack.push(...keptTiles, ...newDrawn);
+      remaining = bag;
+    }
+  }
 
   // Update game state
   game.board = newBoard;
@@ -314,6 +404,8 @@ export async function exchangeTiles(
     throw new Error("Not enough tiles in bag to exchange");
   }
 
+  const isAksharaMode = game.gameStyle === "akshara";
+  const rackSize = isAksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE;
   const player = game.players[playerIndex];
   const returned: string[] = [];
   const newRack = [...player.rack];
@@ -329,7 +421,27 @@ export async function exchangeTiles(
   newRack.push(...drawn);
 
   // Put returned tiles back and shuffle
-  const newBag = SanskritEngine.shuffleArray([...remaining, ...returned]);
+  let newBag = SanskritEngine.shuffleArray([...remaining, ...returned]);
+
+  // Smart draw for akshara mode: only redraw the new tiles if unplayable
+  if (isAksharaMode) {
+    const wordIndex = DictionaryService.getWordAksharaIndex();
+    if (!canFormAnyWord(newRack, wordIndex)) {
+      const keptTiles = newRack.slice(0, newRack.length - drawn.length);
+      let newDrawn = drawn;
+      let bag = newBag;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        bag = shuffleArray([...newDrawn, ...bag]);
+        const redraw = drawFromBag(bag, returned.length);
+        newDrawn = redraw.drawn;
+        bag = redraw.remaining;
+        if (canFormAnyWord([...keptTiles, ...newDrawn], wordIndex)) break;
+      }
+      newRack.length = 0;
+      newRack.push(...keptTiles, ...newDrawn);
+      newBag = bag;
+    }
+  }
 
   game.players[playerIndex].rack = newRack;
   game.tileBag = newBag;
@@ -382,7 +494,9 @@ export async function previewMove(
   let allValid = true;
 
   // Calculate scores
-  const { wordScores } = calculateMoveScore(board, placements);
+  const isAksharaModePreview = game.gameStyle === "akshara";
+  const previewRackSize = isAksharaModePreview ? AKSHARA_RACK_SIZE : RACK_SIZE;
+  const { wordScores } = calculateMoveScore(board, placements, previewRackSize);
 
   for (const ws of wordScores) {
     const isValid = DictionaryService.isValidWord(normalizeText(ws.word));
@@ -451,7 +565,7 @@ export async function triggerAiMove(gameId: string): Promise<IGame | null> {
   if (game.currentTurn % game.players.length !== aiPlayerIdx) return null;
 
   const aiPlayer = game.players[aiPlayerIdx];
-  const ai = new AiPlayer(game.aiDifficulty || 1);
+  const ai = new AiPlayer(game.aiDifficulty || 1, game.gameStyle === "akshara");
   const board = game.board as BoardState;
   const move = await ai.findMove(board, aiPlayer.rack);
 

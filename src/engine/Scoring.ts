@@ -118,6 +118,7 @@ export function scoreWord(cells: Cell[], newPlacements: Set<string>): number {
 export function calculateMoveScore(
   board: BoardState,
   placements: TilePlacement[],
+  rackSize: number = 15,
 ): { totalScore: number; wordScores: { word: string; score: number }[] } {
   const words = extractWords(board, placements);
   const newPlacements = new Set(placements.map((p) => `${p.row},${p.col}`));
@@ -135,8 +136,8 @@ export function calculateMoveScore(
 
   let totalScore = wordScores.reduce((sum, ws) => sum + ws.score, 0);
 
-  // Bonus for using all 15 consonants
-  if (placements.length >= 15) {
+  // Bonus for using all tiles in one turn
+  if (placements.length >= rackSize) {
     totalScore += 15;
   }
 
