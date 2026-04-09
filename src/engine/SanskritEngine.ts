@@ -248,9 +248,11 @@ export function buildAksharaDistribution(words: string[]): void {
 
   const tileCounts = new Map<string, number>();
   for (const [a, count] of filtered) {
-    // Scale: at least 1 tile, proportional to frequency
-    const tiles = Math.max(1, Math.round((count / totalFreq) * TARGET_BAG_SIZE));
-    tileCounts.set(a, tiles);
+    // Scale proportionally to frequency; drop aksharas with 0 tiles
+    const tiles = Math.round((count / totalFreq) * TARGET_BAG_SIZE);
+    if (tiles > 0) {
+      tileCounts.set(a, tiles);
+    }
   }
   aksharaTileCounts = tileCounts;
 }
@@ -298,7 +300,10 @@ export function buildSortedWordAksharas(
   sortedWordAksharas = [];
   for (const [, aksharasList] of wordAksharaIndex) {
     for (const aksharas of aksharasList) {
-      sortedWordAksharas.push(aksharas);
+      // Only include words where ALL aksharas exist in the tile bag
+      if (aksharas.every(a => aksharaTileCounts.has(a))) {
+        sortedWordAksharas.push(aksharas);
+      }
     }
   }
   sortedWordAksharas.sort((a, b) => a.length - b.length);
