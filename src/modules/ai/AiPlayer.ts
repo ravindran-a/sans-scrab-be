@@ -139,9 +139,10 @@ export class AiPlayer {
    */
   private generateAllMoves(board: BoardState, rack: string[]): AiMove[] {
     const moves: AiMove[] = [];
-    const allWords = DictionaryService.getWordsByDifficulty(
-      this.difficulty <= 1 ? 2 : 5,
-    );
+    // Akshara mode requires exact tile matches — narrowing the dictionary
+    // strands the AI on dead racks, so use the full slice regardless of level.
+    const wordDifficulty = this.aksharaMode ? 5 : this.difficulty <= 1 ? 2 : 5;
+    const allWords = DictionaryService.getWordsByDifficulty(wordDifficulty);
     const isEmpty = this.isBoardEmpty(board);
 
     for (const word of allWords) {

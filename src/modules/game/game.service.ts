@@ -108,6 +108,37 @@ export async function createGame(options: CreateGameOptions): Promise<IGame> {
 }
 
 /**
+ * Recover a dead AI rack: return all current tiles to the bag and draw a
+ * fresh rack. In akshara mode, retry up to 3 times until the new rack can
+ * form at least one dictionary word. Used by triggerAiMove to break the
+ * auto-pass loop when the AI's rack has no valid moves on the current board.
+ */
+export function recoverDeadAiRack(
+  oldRack: string[],
+  bag: string[],
+  rackSize: number,
+  isAksharaMode: boolean,
+  wordIndex: Map<string, string[][]>,
+): { rack: string[]; bag: string[] } {
+  if (bag.length === 0) return { rack: oldRack, bag };
+  const draw = drawFromBag(bag, rackSize);
+  let refreshedRack = draw.drawn;
+  let refreshedBag = shuffleArray([...draw.remaining, ...oldRack]);
+
+  if (isAksharaMode) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (canFormAnyWord(refreshedRack, wordIndex)) break;
+      const reshuffled = shuffleArray([...refreshedRack, ...refreshedBag]);
+      const redraw = drawFromBag(reshuffled, rackSize);
+      refreshedRack = redraw.drawn;
+      refreshedBag = redraw.remaining;
+    }
+  }
+
+  return { rack: refreshedRack, bag: refreshedBag };
+}
+
+/**
  * Smart draw for akshara mode: ensure the rack can form at least one word.
  * Reshuffles up to 3 times before giving up (fallback to best draw).
  */
@@ -565,12 +596,32 @@ export async function triggerAiMove(gameId: string): Promise<IGame | null> {
   if (game.currentTurn % game.players.length !== aiPlayerIdx) return null;
 
   const aiPlayer = game.players[aiPlayerIdx];
-  const ai = new AiPlayer(game.aiDifficulty || 1, game.gameStyle === "akshara");
+  const isAksharaMode = game.gameStyle === "akshara";
+  const rackSize = isAksharaMode ? AKSHARA_RACK_SIZE : RACK_SIZE;
+  const ai = new AiPlayer(game.aiDifficulty || 1, isAksharaMode);
   const board = game.board as BoardState;
-  const move = await ai.findMove(board, aiPlayer.rack);
+  let move = await ai.findMove(board, aiPlayer.rack);
+
+  // Recovery: if AI can't move and tiles remain, swap entire rack and retry
+  // once before passing. Prevents the dead-rack auto-pass loop in both modes.
+  if (!move && game.tileBag.length > 0) {
+    const wordIndex = DictionaryService.getWordAksharaIndex();
+    const recovered = recoverDeadAiRack(
+      [...aiPlayer.rack],
+      game.tileBag,
+      rackSize,
+      isAksharaMode,
+      wordIndex,
+    );
+    game.players[aiPlayerIdx].rack = recovered.rack;
+    game.tileBag = recovered.bag;
+    await game.save();
+
+    move = await ai.findMove(board, recovered.rack);
+  }
 
   if (!move) {
-    // AI can't make a move — auto-pass
+    // AI can't make a move even after rack refresh — auto-pass
     return await passTurn(gameId, "ai");
   }
 
