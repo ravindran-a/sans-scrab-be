@@ -52,3 +52,13 @@ export function getRedisClient(): RedisClientType | null {
 export function getRedisSubscriber(): RedisClientType | null {
   return redisSubscriber;
 }
+
+export async function disconnectRedis(): Promise<void> {
+  const closers: Promise<unknown>[] = [];
+  if (redisClient) closers.push(redisClient.quit().catch(() => undefined));
+  if (redisSubscriber)
+    closers.push(redisSubscriber.quit().catch(() => undefined));
+  redisClient = null;
+  redisSubscriber = null;
+  await Promise.all(closers);
+}

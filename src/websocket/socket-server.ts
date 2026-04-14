@@ -126,6 +126,14 @@ function clearTurnTimer(gameId: string) {
   timerCache.delete(gameId);
 }
 
+// --- User → Socket index (local to this node) ---
+// Used to notify a specific user without scanning every connected socket.
+// In multi-node deployments the Redis adapter routes `io.to(userRoom)` across
+// nodes, so joining each socket to `user:<id>` gives us O(1) targeted emits.
+function userRoom(userId: string): string {
+  return `user:${userId}`;
+}
+
 // --- Socket Rate Limiter ---
 const socketRateLimits = new Map<string, number[]>();
 const RATE_LIMIT_WINDOW = 10000; // 10 seconds
@@ -187,6 +195,8 @@ export function initSocketServer(httpServer: HttpServer): Server {
   io.on(SOCKET_EVENTS.CONNECTION, (rawSocket: Socket) => {
     const socket = rawSocket as AuthenticatedSocket;
     console.log(`[Socket] ${socket.username} connected`);
+    // Join a personal room so we can target emits to this user across nodes.
+    socket.join(userRoom(socket.userId));
 
     // Rate limit wrapper
     const rateLimited = (handler: (...args: any[]) => Promise<void> | void) => {
@@ -363,19 +373,20 @@ export function initSocketServer(httpServer: HttpServer): Server {
               opponent: { username: opponent.username },
             });
 
-            // Notify opponent
-            const opponentSockets = await io.fetchSockets();
+            // Notify opponent via their personal room (cluster-safe, no global
+            // socket scan). Also pull their sockets into the game room so
+            // subsequent per-room emits reach them.
+            const opponentSockets = await io
+              .in(userRoom(opponent.userId))
+              .fetchSockets();
             for (const s of opponentSockets) {
-              const as = s as unknown as AuthenticatedSocket;
-              if (as.userId === opponent.userId) {
-                as.join(room.id);
-                as.emit(SOCKET_EVENTS.MATCH_FOUND, {
-                  gameId: joinedGame._id.toString(),
-                  room,
-                  opponent: { username: socket.username },
-                });
-              }
+              s.join(room.id);
             }
+            io.to(userRoom(opponent.userId)).emit(SOCKET_EVENTS.MATCH_FOUND, {
+              gameId: joinedGame._id.toString(),
+              room,
+              opponent: { username: socket.username },
+            });
 
             // Start turn timer
             startTurnTimer(
@@ -704,29 +715,30 @@ export function initSocketServer(httpServer: HttpServer): Server {
       await RoomManager.removeFromMatchmaking(socket.userId);
       socketRateLimits.delete(socket.id);
 
-      // Find active games for this user and mark disconnected
+      // Mark this user disconnected in any active multiplayer games and
+      // notify their rooms. We only need roomId + players here, so project
+      // away board/tileBag/moves to keep the read cheap.
       try {
         const activeGames = await GameModel.find({
           "players.userId": socket.userId,
           status: "active",
-        });
+          roomId: { $exists: true, $ne: null },
+        }).select("roomId players");
 
         for (const game of activeGames) {
           const player = game.players.find(
             (p: any) => p.userId === socket.userId,
           );
-          if (player) {
-            player.connected = false;
-            await game.save();
-
-            // Notify opponent via room
-            if (game.roomId) {
-              io.to(game.roomId).emit(SOCKET_EVENTS.GAME_STATE, {
-                game: sanitizeGameForPlayer(game, ""),
-                disconnected: socket.username,
-              });
-            }
-          }
+          if (!player || !game.roomId) continue;
+          // Atomic field update avoids writing the whole doc back.
+          await GameModel.updateOne(
+            { _id: game._id, "players.userId": socket.userId },
+            { $set: { "players.$.connected": false } },
+          );
+          io.to(game.roomId).emit(SOCKET_EVENTS.GAME_STATE, {
+            game: sanitizeGameForPlayer(game, ""),
+            disconnected: socket.username,
+          });
         }
       } catch (err) {
         console.error("[Socket] Disconnect cleanup error:", err);

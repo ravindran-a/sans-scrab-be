@@ -17,6 +17,9 @@ export interface RoomInfo {
 const ROOM_PREFIX = "room:";
 const ROOM_LIST_KEY = "rooms:public";
 const MATCHMAKING_QUEUE = "matchmaking:queue";
+const MATCHMAKING_USER_PREFIX = "matchmaking:user:";
+const MATCHMAKING_ENTRY_TTL = 300; // 5 min — crash-safe auto-expiry
+const ROOM_TTL = 7200; // 2h
 
 // In-memory fallback when Redis is unavailable
 const memoryRooms = new Map<string, RoomInfo>();
@@ -49,7 +52,9 @@ async function createRoom(
   };
 
   if (redis) {
-    await redis.set(`${ROOM_PREFIX}${id}`, JSON.stringify(room), { EX: 7200 });
+    await redis.set(`${ROOM_PREFIX}${id}`, JSON.stringify(room), {
+      EX: ROOM_TTL,
+    });
     if (!isPrivate) {
       await redis.sAdd(ROOM_LIST_KEY, id);
     }
@@ -110,8 +115,13 @@ async function updateRoom(room: RoomInfo): Promise<void> {
   if (redis) {
     // Reset TTL to 2 hours on every update (covers rematch, game start, etc.)
     await redis.set(`${ROOM_PREFIX}${room.id}`, JSON.stringify(room), {
-      EX: 7200,
+      EX: ROOM_TTL,
     });
+    // A public room that has left the "waiting" state should not appear in
+    // the public listing. Remove lazily on every update.
+    if (room.status !== "waiting" || room.isPrivate) {
+      await redis.sRem(ROOM_LIST_KEY, room.id);
+    }
   } else {
     memoryRooms.set(room.id, room);
   }
@@ -122,14 +132,16 @@ async function getPublicRooms(): Promise<RoomInfo[]> {
   if (redis) {
     const roomIds = await redis.sMembers(ROOM_LIST_KEY);
     const rooms: RoomInfo[] = [];
+    const stale: string[] = [];
     for (const id of roomIds) {
       const room = await getRoom(id);
-      if (room && room.status === "waiting") {
+      if (room && room.status === "waiting" && !room.isPrivate) {
         rooms.push(room);
-      } else if (!room) {
-        await redis.sRem(ROOM_LIST_KEY, id);
+      } else {
+        stale.push(id);
       }
     }
+    if (stale.length > 0) await redis.sRem(ROOM_LIST_KEY, stale);
     return rooms;
   }
   return Array.from(memoryRooms.values()).filter(
@@ -147,6 +159,15 @@ async function deleteRoom(roomId: string): Promise<void> {
   }
 }
 
+/**
+ * Matchmaking layout (Redis):
+ *   matchmaking:queue            ZSET  member=userId, score=elo
+ *   matchmaking:user:<userId>    STRING JSON(username, elo, timestamp)  TTL=5m
+ *
+ * Using userId as the ZSET member makes ZREM atomic and idempotent — two
+ * processes competing for the same candidate cannot both succeed. Per-user
+ * metadata keys carry a TTL so crashed processes don't leak queue entries.
+ */
 async function addToMatchmaking(
   userId: string,
   username: string,
@@ -154,11 +175,15 @@ async function addToMatchmaking(
 ): Promise<void> {
   const redis = getRedisClient();
   if (redis) {
-    await redis.zAdd(MATCHMAKING_QUEUE, {
-      score: elo,
-      value: JSON.stringify({ userId, username, elo, timestamp: Date.now() }),
-    });
+    await redis.set(
+      `${MATCHMAKING_USER_PREFIX}${userId}`,
+      JSON.stringify({ username, elo, timestamp: Date.now() }),
+      { EX: MATCHMAKING_ENTRY_TTL },
+    );
+    await redis.zAdd(MATCHMAKING_QUEUE, { score: elo, value: userId });
   } else {
+    const existingIdx = memoryMatchQueue.findIndex((c) => c.userId === userId);
+    if (existingIdx !== -1) memoryMatchQueue.splice(existingIdx, 1);
     memoryMatchQueue.push({ userId, username, elo, timestamp: Date.now() });
   }
 }
@@ -174,12 +199,18 @@ async function findMatch(
       elo - 200,
       elo + 200,
     );
-    for (const candidateStr of candidates) {
-      const candidate = JSON.parse(candidateStr);
-      if (candidate.userId !== userId) {
-        await redis.zRem(MATCHMAKING_QUEUE, candidateStr);
-        return { userId: candidate.userId, username: candidate.username };
-      }
+    for (const candidateId of candidates) {
+      if (candidateId === userId) continue;
+      // Atomic claim: ZREM returns 1 iff this caller was the one to remove it.
+      const removed = await redis.zRem(MATCHMAKING_QUEUE, candidateId);
+      if (removed === 0) continue; // another process got here first
+      const metaRaw = await redis.get(
+        `${MATCHMAKING_USER_PREFIX}${candidateId}`,
+      );
+      await redis.del(`${MATCHMAKING_USER_PREFIX}${candidateId}`);
+      if (!metaRaw) continue; // metadata TTL expired — candidate is stale
+      const meta = JSON.parse(metaRaw) as { username: string };
+      return { userId: candidateId, username: meta.username };
     }
     return null;
   }
@@ -196,14 +227,8 @@ async function findMatch(
 async function removeFromMatchmaking(userId: string): Promise<void> {
   const redis = getRedisClient();
   if (redis) {
-    const all = await redis.zRange(MATCHMAKING_QUEUE, 0, -1);
-    for (const entry of all) {
-      const parsed = JSON.parse(entry);
-      if (parsed.userId === userId) {
-        await redis.zRem(MATCHMAKING_QUEUE, entry);
-        break;
-      }
-    }
+    await redis.zRem(MATCHMAKING_QUEUE, userId);
+    await redis.del(`${MATCHMAKING_USER_PREFIX}${userId}`);
   } else {
     const idx = memoryMatchQueue.findIndex((c) => c.userId === userId);
     if (idx !== -1) memoryMatchQueue.splice(idx, 1);

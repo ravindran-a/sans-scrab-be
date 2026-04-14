@@ -50,7 +50,9 @@ export async function register(
     throw new Error("User with this email or username already exists");
   }
 
-  const user = await UserModel.create({
+  // Pre-hash the password via a model instance so the pre-save hook runs,
+  // then persist once with the refresh token already set.
+  const user = new UserModel({
     username,
     email,
     password,
@@ -58,7 +60,6 @@ export async function register(
     country,
   });
   const tokens = generateTokens(user);
-
   user.refreshToken = tokens.refreshToken;
   await user.save();
 

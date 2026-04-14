@@ -354,12 +354,26 @@ export async function makeMove(input: MoveInput): Promise<{
     determineWinner(game);
   }
 
-  // Optimistic locking with retry: ensure no concurrent move modified the turn
+  // Optimistic locking with retry: ensure no concurrent move modified the turn.
+  // Use $set to avoid shipping _id, __v, timestamps, and other immutable
+  // fields that findOneAndUpdate would otherwise choke on with a full doc.
+  const update = {
+    $set: {
+      board: game.board,
+      players: game.players,
+      currentTurn: game.currentTurn,
+      tileBag: game.tileBag,
+      moves: game.moves,
+      turnStartedAt: game.turnStartedAt,
+      status: game.status,
+      winner: game.winner,
+    },
+  };
   let saved = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     saved = await GameModel.findOneAndUpdate(
       { _id: game._id, currentTurn: expectedTurn },
-      game.toObject(),
+      update,
       { new: true },
     );
     if (saved) break;
@@ -562,9 +576,13 @@ export async function getGame(gameId: string): Promise<IGame | null> {
 }
 
 export async function getGamesByUser(userId: string): Promise<IGame[]> {
+  // History view only needs summary fields. Exclude heavy arrays (board,
+  // tileBag, moves) that the UI never renders here — they inflate the
+  // payload by orders of magnitude.
   return GameModel.find({ "players.userId": userId })
     .sort({ createdAt: -1 })
-    .limit(20);
+    .limit(20)
+    .select("-board -tileBag -moves");
 }
 
 export async function abandonGame(

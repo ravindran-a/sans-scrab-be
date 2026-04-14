@@ -1,8 +1,10 @@
 import { Request, Response, Router } from "express";
+import jwt from "jsonwebtoken";
 import { z } from "zod";
+import { ENV } from "../../config/env";
 import { authMiddleware } from "../../middleware/auth.middleware";
 import { UserModel } from "./auth.model";
-import { AuthService } from "./auth.service";
+import { AuthService, JwtPayload } from "./auth.service";
 
 const router = Router();
 
@@ -166,8 +168,35 @@ router.get("/me", authMiddleware, async (req: Request, res: Response) => {
 
 router.post("/logout", async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).userId;
-    if (userId) {
+    // Identify user from refresh-token cookie so logout works even with an
+    // expired access token. Falls back to auth header if present.
+    const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
+    let userId: string | undefined;
+    if (refreshToken) {
+      try {
+        const decoded = jwt.verify(
+          refreshToken,
+          ENV.JWT_REFRESH_SECRET,
+        ) as JwtPayload;
+        userId = decoded.userId;
+      } catch {
+        /* ignore — still clear cookie */
+      }
+    }
+    if (!userId) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        try {
+          const decoded = AuthService.verifyAccessToken(
+            authHeader.split(" ")[1],
+          );
+          userId = decoded.userId;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    if (userId && !userId.startsWith("guest_")) {
       await AuthService.logout(userId);
     }
     res.clearCookie("refreshToken");

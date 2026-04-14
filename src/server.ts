@@ -4,10 +4,12 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { createServer } from "http";
+import mongoose from "mongoose";
+import type { Server as SocketIOServer } from "socket.io";
 
 import { connectDB } from "./config/db";
 import { ENV } from "./config/env";
-import { connectRedis } from "./config/redis";
+import { connectRedis, disconnectRedis } from "./config/redis";
 import { DictionaryService } from "./modules/dictionary/dictionary.service";
 import { initSocketServer } from "./websocket/socket-server";
 
@@ -101,20 +103,51 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+let io: SocketIOServer | null = null;
+let shuttingDown = false;
+
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[Server] ${signal} received — shutting down`);
+
+  // Stop accepting new HTTP + WS connections
+  httpServer.close(() => console.log("[Server] HTTP closed"));
+  if (io) {
+    await new Promise<void>((resolve) => io!.close(() => resolve()));
+    console.log("[Socket] Closed");
+  }
+
+  await disconnectRedis();
+  console.log("[Redis] Disconnected");
+
+  await mongoose.disconnect();
+  console.log("[DB] Disconnected");
+
+  // Give logs a tick to flush, then exit.
+  setTimeout(() => process.exit(0), 100).unref();
+}
+
 // Initialize
 async function start() {
   await connectDB();
   await connectRedis();
   await DictionaryService.loadDictionary();
 
-  initSocketServer(httpServer);
+  io = initSocketServer(httpServer);
 
   httpServer.listen(ENV.PORT, () => {
     console.log(`[Server] Running on port ${ENV.PORT}`);
     console.log(`[Server] Environment: ${ENV.NODE_ENV}`);
   });
+
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 }
 
-start().catch(console.error);
+// Only auto-start when executed directly (not when imported by tests).
+if (require.main === module) {
+  start().catch(console.error);
+}
 
-export { app, httpServer };
+export { app, httpServer, start, shutdown };
